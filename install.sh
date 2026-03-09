@@ -29,7 +29,6 @@ pick() {
   local __title="$1"; shift
   local __opts=("$@")
   echo ""
-  echo -e "${WH}  ┌─ ${__title} ${"─"*$((50-${#__title}))}┐${CL}" 2>/dev/null || \
   echo -e "${WH}  ── ${__title} ──────────────────────────────────────${CL}"
   local i=1
   local keys=()
