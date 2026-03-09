@@ -1,153 +1,397 @@
 #!/usr/bin/env bash
-# ╔══════════════════════════════════════════════════════════════╗
-# ║   FixItBlock v3 — AI-Powered Proxmox Maintenance Agent      ║
-# ╚══════════════════════════════════════════════════════════════╝
+# FixItBlock v3 — AI Proxmox Maintenance Agent
+# Whiptail GUI installer — community scripts style
 set -euo pipefail
-R='\033[0;31m' O='\033[0;33m' G='\033[0;32m' C='\033[0;36m' W='\033[1;37m' N='\033[0m'
-die(){ echo -e "${R}[ERROR] $*${N}" >&2; exit 1; }
-info(){ echo -e "${C}[INFO]  $*${N}"; }
-ok()  { echo -e "${G}[OK]    $*${N}"; }
-warn(){ echo -e "${O}[WARN]  $*${N}"; }
-ask() { echo -e "${W}[INPUT] $*${N}"; }
 
-echo -e "${O}"
-echo '  ███████╗██╗██╗  ██╗██╗████████╗██████╗ ██╗      ██████╗  ██████╗██╗  ██╗'
-echo '  ██╔════╝██║╚██╗██╔╝██║╚══██╔══╝██╔══██╗██║     ██╔═══██╗██╔════╝██║ ██╔╝'
-echo '  █████╗  ██║ ╚███╔╝ ██║   ██║   ██████╔╝██║     ██║   ██║██║     █████╔╝ '
-echo '  ██╔══╝  ██║ ██╔██╗ ██║   ██║   ██╔══██╗██║     ██║   ██║██║     ██╔═██╗ '
-echo '  ██║     ██║██╔╝ ██╗██║   ██║   ██████╔╝███████╗╚██████╔╝╚██████╗██║  ██╗'
-echo '  ╚═╝     ╚═╝╚═╝  ╚═╝╚═╝   ╚═╝   ╚═════╝ ╚══════╝ ╚═════╝  ╚═════╝╚═╝  ╚═╝'
-echo -e "${C}                  AI-Powered Proxmox Maintenance Agent v3${N}"
-echo ""
+# ── Colors ──────────────────────────────────────────────────────
+YW='\033[33m' BL='\033[36m' RD='\033[01;31m' GN='\033[1;92m'
+CL='\033[m'   CM="${GN}✓${CL}" CROSS="${RD}✗${CL}" INFO="${YW}●${CL}"
 
+header_info() {
+  clear
+  cat <<"EOF"
+  ███████╗██╗██╗  ██╗██╗████████╗██████╗ ██╗      ██████╗  ██████╗██╗  ██╗
+  ██╔════╝██║╚██╗██╔╝██║╚══██╔══╝██╔══██╗██║     ██╔═══██╗██╔════╝██║ ██╔╝
+  █████╗  ██║ ╚███╔╝ ██║   ██║   ██████╔╝██║     ██║   ██║██║     █████╔╝
+  ██╔══╝  ██║ ██╔██╗ ██║   ██║   ██╔══██╗██║     ██║   ██║██║     ██╔═██╗
+  ██║     ██║██╔╝ ██╗██║   ██║   ██████╔╝███████╗╚██████╔╝╚██████╗██║  ██╗
+  ╚═╝     ╚═╝╚═╝  ╚═╝╚═╝   ╚═╝   ╚═════╝ ╚══════╝ ╚═════╝  ╚═════╝╚═╝  ╚═╝
+EOF
+  echo -e "\n${BL}         AI-Powered Proxmox Maintenance Agent v3${CL}\n"
+}
+
+msg_info()  { echo -e " ${INFO} ${YW}$1...${CL}"; }
+msg_ok()    { echo -e " ${CM} ${GN}$1${CL}"; }
+msg_error() { echo -e " ${CROSS} ${RD}$1${CL}"; }
+
+die() { msg_error "$*"; exit 1; }
+
+# ── Checks ──────────────────────────────────────────────────────
 [[ $EUID -eq 0 ]] || die "Must run as root on the Proxmox host"
 command -v pveversion &>/dev/null || die "Must run on a Proxmox VE host"
+command -v whiptail   &>/dev/null || apt-get install -y -qq whiptail
 
-echo -e "${W}─── CONTAINER ─────────────────────────────────────────────────${N}"
-ask "Container ID [200]:"; read -r CT_ID; CT_ID=${CT_ID:-200}
-ask "Hostname [fixitblock]:"; read -r CT_HOST; CT_HOST=${CT_HOST:-fixitblock}
-ask "Storage [local-lvm]:"; read -r CT_STG; CT_STG=${CT_STG:-local-lvm}
-ask "RAM MB [512]:"; read -r CT_RAM; CT_RAM=${CT_RAM:-512}
-ask "Disk GB [4]:"; read -r CT_DISK; CT_DISK=${CT_DISK:-4}
-ask "CPU cores [1]:"; read -r CT_CPU; CT_CPU=${CT_CPU:-1}
-ask "Network bridge [vmbr0]:"; read -r CT_BR; CT_BR=${CT_BR:-vmbr0}
-ask "IP (x.x.x.x/24) or dhcp [dhcp]:"; read -r CT_IP; CT_IP=${CT_IP:-dhcp}
-if [[ "$CT_IP" == "dhcp" ]]; then CT_NET="ip=dhcp"
-else ask "Gateway:"; read -r CT_GW; CT_NET="ip=${CT_IP},gw=${CT_GW}"; fi
-ask "Container root password:"; read -rs CT_PASS; echo
-[[ -z "$CT_PASS" ]] && die "Password required"
+header_info
 
-echo -e "${W}─── PROXMOX ────────────────────────────────────────────────────${N}"
-DEFAULT_IP=$(hostname -I | awk '{print $1}')
-ask "Proxmox host IP [${DEFAULT_IP}]:"; read -r PVE_HOST; PVE_HOST=${PVE_HOST:-$DEFAULT_IP}
-ask "Node name [$(hostname)]:"; read -r PVE_NODE; PVE_NODE=${PVE_NODE:-$(hostname)}
-ask "API user [root@pam]:"; read -r PVE_USER; PVE_USER=${PVE_USER:-root@pam}
-echo "Auth: 1=API Token  2=Password"; ask "Choice [1]:"; read -r AUTH; AUTH=${AUTH:-1}
-PVE_TOKEN_NAME="" PVE_TOKEN_VALUE="" PVE_PASS=""
-if [[ "$AUTH" == "1" ]]; then
-  ask "Token name:"; read -r PVE_TOKEN_NAME
-  ask "Token value:"; read -rs PVE_TOKEN_VALUE; echo
-else
-  ask "Proxmox password:"; read -rs PVE_PASS; echo
-fi
+# ── Helper: auto-detect available storage pools ──────────────────
+get_storage_list() {
+  pvesm status --content rootdir 2>/dev/null | awk 'NR>1 && $2=="active" {print $1, $1}' || echo "local-lvm local-lvm"
+}
 
-echo -e "${W}─── AI ─────────────────────────────────────────────────────────${N}"
-echo "  1=Ollama(local,free)  2=OpenAI  3=Anthropic  4=Groq  5=Skip"
-ask "Choice [1]:"; read -r AIC; AIC=${AIC:-1}
-AI_PROV="ollama" AI_KEY="" AI_MDL="llama3"
-case "$AIC" in
-  2) AI_PROV="openai";    ask "OpenAI key:";    read -rs AI_KEY; echo; AI_MDL="gpt-4o" ;;
-  3) AI_PROV="anthropic"; ask "Anthropic key:"; read -rs AI_KEY; echo; AI_MDL="claude-3-5-sonnet-20241022" ;;
-  4) AI_PROV="groq";      ask "Groq key:";      read -rs AI_KEY; echo; AI_MDL="llama-3.1-70b-versatile" ;;
-  5) AI_PROV="none"; AI_MDL="" ;;
-esac
-ask "Enable AI web search? [Y/n]:"; read -r WS; WS=${WS:-Y}
-WS_EN="true"; [[ "$WS" =~ ^[Nn] ]] && WS_EN="false"
-ask "Brave Search API key (optional, blank=DuckDuckGo):"; read -rs BRAVE; echo
-ask "SerpAPI key (optional):"; read -rs SERP; echo
+get_storage_all() {
+  pvesm status 2>/dev/null | awk 'NR>1 && $2=="active" {print $1, $1}' || echo "local local"
+}
 
-echo -e "${W}─── ADMIN ACCOUNT ──────────────────────────────────────────────${N}"
-ask "Admin username [admin]:"; read -r ADM_USER; ADM_USER=${ADM_USER:-admin}
-while true; do
-  ask "Admin password (12+ chars, upper+lower+number+symbol):"; read -rs ADM_PASS; echo
-  ask "Confirm:"; read -rs ADM_PASS2; echo
-  [[ "$ADM_PASS" == "$ADM_PASS2" ]] || { warn "No match"; continue; }
-  [[ ${#ADM_PASS} -ge 12 ]] || { warn "Too short"; continue; }
-  [[ "$ADM_PASS" =~ [A-Z] ]] || { warn "Need uppercase"; continue; }
-  [[ "$ADM_PASS" =~ [a-z] ]] || { warn "Need lowercase"; continue; }
-  [[ "$ADM_PASS" =~ [0-9] ]] || { warn "Need number"; continue; }
-  [[ "$ADM_PASS" =~ [^a-zA-Z0-9] ]] || { warn "Need symbol"; continue; }
-  break
+get_bridges() {
+  ip link show | awk '/^[0-9]+: vmbr/{gsub(":",""); print $2, $2}' || echo "vmbr0 vmbr0"
+}
+
+get_next_ctid() {
+  pvesh get /cluster/nextid 2>/dev/null || echo "200"
+}
+
+# ── WELCOME ──────────────────────────────────────────────────────
+whiptail --title "FixItBlock v3 Installer" \
+  --msgbox "Welcome to the FixItBlock AI Proxmox Maintenance Agent installer.\n\nThis will:\n  • Create an LXC container\n  • Install the AI agent\n  • Set up Anthropic Claude + Ollama offline AI\n  • Configure web dashboard with admin login\n  • Harden and secure the container\n\nPress OK to begin." \
+  18 62
+
+# ── INSTALL TYPE ─────────────────────────────────────────────────
+INSTALL_TYPE=$(whiptail --title "Installation Type" \
+  --menu "Choose installation type:" 12 55 3 \
+  "default"   "Default Install (recommended)" \
+  "advanced"  "Advanced Install (custom settings)" \
+  "minimal"   "Minimal Install (no AI, basic only)" \
+  3>&1 1>&2 2>&3) || exit 0
+
+# ── CONTAINER ID ─────────────────────────────────────────────────
+NEXT_ID=$(get_next_ctid)
+CT_ID=$(whiptail --title "Container ID" \
+  --inputbox "Enter container ID:" 8 45 "$NEXT_ID" \
+  3>&1 1>&2 2>&3) || exit 0
+
+# Validate ID is not taken
+while pct status $CT_ID &>/dev/null 2>&1; do
+  CT_ID=$(whiptail --title "Container ID" \
+    --inputbox "ID $CT_ID is already in use. Enter a different ID:" 8 50 "$((CT_ID+1))" \
+    3>&1 1>&2 2>&3) || exit 0
 done
 
-echo -e "${W}─── AGENT SETTINGS ─────────────────────────────────────────────${N}"
-ask "Web UI port [7070]:"; read -r PORT; PORT=${PORT:-7070}
-ask "Scan interval seconds [300]:"; read -r SINT; SINT=${SINT:-300}
-ask "Enable auto-fix? [y/N]:"; read -r AFX; AFX=${AFX:-N}
-AFX_VAL="false"; [[ "$AFX" =~ ^[Yy] ]] && AFX_VAL="true"
+# ── HOSTNAME ─────────────────────────────────────────────────────
+CT_HOST=$(whiptail --title "Hostname" \
+  --inputbox "Container hostname:" 8 45 "fixitblock" \
+  3>&1 1>&2 2>&3) || exit 0
 
-echo ""
-echo -e "${G}Creating CT${CT_ID} '${CT_HOST}' — ${CT_CPU}CPU ${CT_RAM}MB ${CT_DISK}GB${N}"
-ask "Proceed? [Y/n]:"; read -r GO; GO=${GO:-Y}
-[[ "$GO" =~ ^[Nn] ]] && exit 0
+# ── STORAGE — auto-detect ─────────────────────────────────────────
+STORAGE_LIST=$(get_storage_list)
+CT_STG=$(whiptail --title "Storage" \
+  --menu "Select storage pool for container disk:" 14 55 6 \
+  $STORAGE_LIST \
+  3>&1 1>&2 2>&3) || exit 0
 
-# Template
-info "Checking LXC template..."
-TMPL="ubuntu-22.04-standard_22.04-1_amd64.tar.zst"
-if ! ls /var/lib/vz/template/cache/$TMPL &>/dev/null; then
-  info "Downloading Ubuntu 22.04..."; pveam update -q; pveam download local $TMPL
+# ── RAM ──────────────────────────────────────────────────────────
+CT_RAM=$(whiptail --title "Memory" \
+  --menu "Select RAM allocation:" 14 50 5 \
+  "512"  "512 MB  (minimum)" \
+  "1024" "1 GB    (recommended)" \
+  "2048" "2 GB    (with Ollama AI)" \
+  "4096" "4 GB    (full AI + models)" \
+  "8192" "8 GB    (maximum performance)" \
+  3>&1 1>&2 2>&3) || exit 0
+
+# ── DISK ─────────────────────────────────────────────────────────
+CT_DISK=$(whiptail --title "Disk Size" \
+  --menu "Select disk size:" 12 45 4 \
+  "4"  "4 GB  (minimum)" \
+  "8"  "8 GB  (recommended)" \
+  "16" "16 GB (with Ollama models)" \
+  "32" "32 GB (maximum)" \
+  3>&1 1>&2 2>&3) || exit 0
+
+# ── CPU ──────────────────────────────────────────────────────────
+CT_CPU=$(whiptail --title "CPU Cores" \
+  --menu "Select CPU cores:" 12 45 4 \
+  "1" "1 core  (minimum)" \
+  "2" "2 cores (recommended)" \
+  "4" "4 cores (with AI workloads)" \
+  "8" "8 cores (maximum)" \
+  3>&1 1>&2 2>&3) || exit 0
+
+# ── NETWORK BRIDGE — auto-detect ─────────────────────────────────
+BRIDGE_LIST=$(get_bridges)
+CT_BR=$(whiptail --title "Network Bridge" \
+  --menu "Select network bridge:" 12 50 4 \
+  $BRIDGE_LIST \
+  3>&1 1>&2 2>&3) || exit 0
+
+# ── IP ADDRESS ───────────────────────────────────────────────────
+NET_TYPE=$(whiptail --title "Network" \
+  --menu "IP address configuration:" 10 50 2 \
+  "dhcp"   "DHCP (automatic, recommended)" \
+  "static" "Static IP (manual)" \
+  3>&1 1>&2 2>&3) || exit 0
+
+CT_NET="ip=dhcp"
+CT_IP_DISPLAY="DHCP"
+if [[ "$NET_TYPE" == "static" ]]; then
+  CT_IP=$(whiptail --title "Static IP" \
+    --inputbox "Enter IP address with prefix (e.g. 192.168.1.200/24):" 8 55 "" \
+    3>&1 1>&2 2>&3) || exit 0
+  CT_GW=$(whiptail --title "Gateway" \
+    --inputbox "Enter gateway IP (e.g. 192.168.1.1):" 8 50 "" \
+    3>&1 1>&2 2>&3) || exit 0
+  CT_NET="ip=${CT_IP},gw=${CT_GW}"
+  CT_IP_DISPLAY="$CT_IP"
 fi
 
-# Create container
-info "Creating container..."
+# ── CONTAINER PASSWORD ───────────────────────────────────────────
+CT_PASS=$(whiptail --title "Container Password" \
+  --passwordbox "Set container root password:" 8 50 \
+  3>&1 1>&2 2>&3) || exit 0
+
+# ── PROXMOX CONNECTION — auto-detect ─────────────────────────────
+DEFAULT_IP=$(hostname -I | awk '{print $1}')
+DEFAULT_NODE=$(hostname)
+
+PVE_HOST=$(whiptail --title "Proxmox Host" \
+  --inputbox "Proxmox host IP:" 8 50 "$DEFAULT_IP" \
+  3>&1 1>&2 2>&3) || exit 0
+
+PVE_NODE=$(whiptail --title "Proxmox Node" \
+  --inputbox "Proxmox node name:" 8 50 "$DEFAULT_NODE" \
+  3>&1 1>&2 2>&3) || exit 0
+
+PVE_USER=$(whiptail --title "Proxmox User" \
+  --inputbox "Proxmox API user:" 8 50 "root@pam" \
+  3>&1 1>&2 2>&3) || exit 0
+
+# ── AUTH METHOD ──────────────────────────────────────────────────
+AUTH_METHOD=$(whiptail --title "Authentication" \
+  --menu "Proxmox authentication method:" 10 50 2 \
+  "token"    "API Token (recommended)" \
+  "password" "Password" \
+  3>&1 1>&2 2>&3) || exit 0
+
+PVE_TOKEN_NAME="" PVE_TOKEN_VALUE="" PVE_PASS=""
+if [[ "$AUTH_METHOD" == "token" ]]; then
+  PVE_TOKEN_NAME=$(whiptail --title "API Token Name" \
+    --inputbox "Token name (e.g. fixitblock):" 8 50 "fixitblock" \
+    3>&1 1>&2 2>&3) || exit 0
+  PVE_TOKEN_VALUE=$(whiptail --title "API Token Value" \
+    --passwordbox "Token value:" 8 50 \
+    3>&1 1>&2 2>&3) || exit 0
+else
+  PVE_PASS=$(whiptail --title "Proxmox Password" \
+    --passwordbox "Proxmox password:" 8 50 \
+    3>&1 1>&2 2>&3) || exit 0
+fi
+
+# ── AI PROVIDER ──────────────────────────────────────────────────
+if [[ "$INSTALL_TYPE" != "minimal" ]]; then
+  AI_PROV=$(whiptail --title "AI Provider" \
+    --menu "Select primary AI provider:\n(Ollama offline fallback is always installed)" 15 65 5 \
+    "anthropic" "Anthropic Claude (best reasoning, needs API key)" \
+    "ollama"    "Ollama only (fully local, no API key needed)" \
+    "openai"    "OpenAI GPT-4o (needs API key)" \
+    "groq"      "Groq (fast inference, needs API key)" \
+    "none"      "No AI (basic monitoring only)" \
+    3>&1 1>&2 2>&3) || exit 0
+
+  AI_KEY=""
+  AI_MDL=""
+  case "$AI_PROV" in
+    anthropic)
+      AI_KEY=$(whiptail --title "Anthropic API Key" \
+        --passwordbox "Enter your Anthropic API key\n(get one at console.anthropic.com):" 10 60 \
+        3>&1 1>&2 2>&3) || exit 0
+      AI_MDL="claude-3-5-sonnet-20241022" ;;
+    openai)
+      AI_KEY=$(whiptail --title "OpenAI API Key" \
+        --passwordbox "Enter your OpenAI API key:" 8 55 \
+        3>&1 1>&2 2>&3) || exit 0
+      AI_MDL="gpt-4o" ;;
+    groq)
+      AI_KEY=$(whiptail --title "Groq API Key" \
+        --passwordbox "Enter your Groq API key:" 8 55 \
+        3>&1 1>&2 2>&3) || exit 0
+      AI_MDL="llama-3.1-70b-versatile" ;;
+    ollama) AI_MDL="llama3.2" ;;
+    none)   AI_MDL="" ;;
+  esac
+
+  # Ollama model selection (always shown since Ollama is always installed)
+  OLLAMA_MDL=$(whiptail --title "Ollama Offline Model" \
+    --menu "Select primary offline AI model\n(will be pulled automatically):" 15 60 6 \
+    "llama3.2"   "Llama 3.2 (recommended, best balance)" \
+    "mistral"    "Mistral 7B (fast, good quality)" \
+    "codellama"  "CodeLlama (code-focused)" \
+    "llama3.1"   "Llama 3.1 8B (latest)" \
+    "phi3"       "Phi-3 Mini (lightweight)" \
+    "gemma2"     "Gemma 2 (Google)" \
+    3>&1 1>&2 2>&3) || exit 0
+
+  # Web search
+  if whiptail --title "Web Search" --yesno "Enable AI web search?\n\nAllows the AI to search the internet for Proxmox fixes, scripts, and CVEs.\n(Uses DuckDuckGo — no API key needed)" 12 60; then
+    WS_EN="true"
+  else
+    WS_EN="false"
+  fi
+
+  # Auto-execute
+  if whiptail --title "Auto-Execute" --yesno "Enable AI auto-execute?\n\nAllows the AI to automatically run LOW-risk fix scripts without manual approval.\n\nMEDIUM and HIGH risk always require approval.\n\n(Recommended: No for first-time users)" 16 65; then
+    AUTO_EXEC="true"
+  else
+    AUTO_EXEC="false"
+  fi
+else
+  AI_PROV="none"; AI_KEY=""; AI_MDL=""; OLLAMA_MDL="llama3.2"; WS_EN="false"; AUTO_EXEC="false"
+fi
+
+# ── ADMIN ACCOUNT ────────────────────────────────────────────────
+ADM_USER=$(whiptail --title "Admin Username" \
+  --inputbox "Create admin username for web dashboard:" 8 50 "admin" \
+  3>&1 1>&2 2>&3) || exit 0
+
+# Password with strength check
+while true; do
+  ADM_PASS=$(whiptail --title "Admin Password" \
+    --passwordbox "Create admin password:\n(Min 12 chars, must include uppercase, lowercase, number, symbol)" 10 65 \
+    3>&1 1>&2 2>&3) || exit 0
+  ADM_PASS2=$(whiptail --title "Confirm Password" \
+    --passwordbox "Confirm admin password:" 8 50 \
+    3>&1 1>&2 2>&3) || exit 0
+
+  ERR=""
+  [[ "$ADM_PASS" != "$ADM_PASS2" ]]         && ERR="Passwords do not match"
+  [[ ${#ADM_PASS} -lt 12 ]]                 && ERR="Password too short (minimum 12 characters)"
+  [[ ! "$ADM_PASS" =~ [A-Z] ]]              && ERR="Password needs at least one UPPERCASE letter"
+  [[ ! "$ADM_PASS" =~ [a-z] ]]              && ERR="Password needs at least one lowercase letter"
+  [[ ! "$ADM_PASS" =~ [0-9] ]]              && ERR="Password needs at least one number"
+  [[ ! "$ADM_PASS" =~ [^a-zA-Z0-9] ]]      && ERR="Password needs at least one symbol (!@#\$...)"
+
+  [[ -z "$ERR" ]] && break
+  whiptail --title "Password Error" --msgbox "❌ $ERR\n\nPlease try again." 10 55
+done
+
+# ── WEB PORT ─────────────────────────────────────────────────────
+WEB_PORT=$(whiptail --title "Web UI Port" \
+  --inputbox "Web dashboard port:" 8 45 "7070" \
+  3>&1 1>&2 2>&3) || exit 0
+
+# ── SCAN INTERVAL ────────────────────────────────────────────────
+SCAN_INT=$(whiptail --title "Scan Interval" \
+  --menu "How often should the agent scan for issues?" 12 55 4 \
+  "60"  "Every 1 minute  (aggressive)" \
+  "300" "Every 5 minutes (recommended)" \
+  "600" "Every 10 minutes (light)" \
+  "3600" "Every hour (minimal)" \
+  3>&1 1>&2 2>&3) || exit 0
+
+# ── AUTO-FIX ─────────────────────────────────────────────────────
+if whiptail --title "Auto-Fix" --yesno "Enable automatic fixing of detected issues?\n\nThe agent will automatically fix safe issues like\ncleaning old logs, vacuuming journals, etc.\n\n(Recommended: Yes)" 14 60; then
+  AFX_VAL="true"
+else
+  AFX_VAL="false"
+fi
+
+# ── SUMMARY ──────────────────────────────────────────────────────
+whiptail --title "Installation Summary" --yesno \
+"Ready to install FixItBlock v3!\n
+Container:   CT${CT_ID} '${CT_HOST}'
+Resources:   ${CT_CPU} CPU · ${CT_RAM}MB RAM · ${CT_DISK}GB disk
+Network:     ${CT_IP_DISPLAY} via ${CT_BR}
+Proxmox:     ${PVE_HOST} (${PVE_NODE})
+AI Provider: ${AI_PROV}${AI_MDL:+ — ${AI_MDL}}
+Offline AI:  Ollama (${OLLAMA_MDL})
+Web Search:  ${WS_EN}
+Auto-Fix:    ${AFX_VAL}
+Admin User:  ${ADM_USER}
+Web UI Port: ${WEB_PORT}
+
+Proceed with installation?" \
+24 62 || exit 0
+
+# ════════════════════════════════════════════════════════════════
+#  INSTALLATION
+# ════════════════════════════════════════════════════════════════
+header_info
+
+# ── LXC Template ─────────────────────────────────────────────────
+msg_info "Checking LXC template"
+TMPL="ubuntu-22.04-standard_22.04-1_amd64.tar.zst"
+if ! ls /var/lib/vz/template/cache/$TMPL &>/dev/null; then
+  msg_info "Downloading Ubuntu 22.04 template"
+  pveam update -q
+  pveam download local $TMPL || die "Template download failed"
+fi
+msg_ok "Template ready"
+
+# ── Create Container ─────────────────────────────────────────────
+msg_info "Creating LXC container CT${CT_ID}"
 pct create ${CT_ID} local:vztmpl/${TMPL} \
-  --hostname "${CT_HOST}" --storage "${CT_STG}" --rootfs "${CT_STG}:${CT_DISK}" \
-  --memory "${CT_RAM}" --cores "${CT_CPU}" \
-  --net0 "name=eth0,bridge=${CT_BR},firewall=1,${CT_NET}" \
-  --password "${CT_PASS}" --unprivileged 1 --features nesting=1 --onboot 1 --start 1
+  --hostname "${CT_HOST}" \
+  --storage  "${CT_STG}" \
+  --rootfs   "${CT_STG}:${CT_DISK}" \
+  --memory   "${CT_RAM}" \
+  --cores    "${CT_CPU}" \
+  --net0     "name=eth0,bridge=${CT_BR},firewall=1,${CT_NET}" \
+  --password "${CT_PASS}" \
+  --unprivileged 1 \
+  --features nesting=1 \
+  --onboot   1 \
+  --start    1 &>/dev/null
 sleep 5
-CTIP=$(pct exec ${CT_ID} -- hostname -I 2>/dev/null | awk '{print $1}' || echo "<ip>")
-ok "Container running — IP: ${CTIP}"
+CTIP=$(pct exec ${CT_ID} -- hostname -I 2>/dev/null | awk '{print $1}' || echo "<pending>")
+msg_ok "Container CT${CT_ID} created — IP: ${CTIP}"
 
-# SSH keys
-info "Setting up SSH keys..."
-pct exec ${CT_ID} -- bash -c "mkdir -p /root/.ssh && chmod 700 /root/.ssh && ssh-keygen -t ed25519 -f /root/.ssh/fixitblock_id -N '' -q && cat /root/.ssh/fixitblock_id.pub" > /tmp/fib_pub.txt
-mkdir -p /root/.ssh && touch /root/.ssh/authorized_keys && chmod 600 /root/.ssh/authorized_keys
-cat /tmp/fib_pub.txt >> /root/.ssh/authorized_keys
-ok "SSH key authorized on host"
+# ── SSH Keys ─────────────────────────────────────────────────────
+msg_info "Generating SSH keypair"
+pct exec ${CT_ID} -- bash -c "mkdir -p /root/.ssh && chmod 700 /root/.ssh && ssh-keygen -t ed25519 -f /root/.ssh/fixitblock_id -N '' -q" &>/dev/null
+pct exec ${CT_ID} -- cat /root/.ssh/fixitblock_id.pub >> /root/.ssh/authorized_keys 2>/dev/null || true
+msg_ok "SSH key configured"
 
-# Packages
-info "Installing packages (this takes 1-2 minutes)..."
+# ── Packages ─────────────────────────────────────────────────────
+msg_info "Installing packages (this takes 1-2 minutes)"
 pct exec ${CT_ID} -- bash -c "
-  DEBIAN_FRONTEND=noninteractive apt-get update -qq
+  DEBIAN_FRONTEND=noninteractive apt-get update -qq 2>/dev/null
   apt-get install -y -qq python3 python3-pip git curl ufw fail2ban 2>/dev/null
-  pip3 install --quiet --break-system-packages flask flask-cors requests paramiko python-dotenv openai anthropic groq cryptography psutil 2>/dev/null || \
-  pip3 install --quiet flask flask-cors requests paramiko python-dotenv openai anthropic groq cryptography psutil
-"
-ok "Packages installed"
+" &>/dev/null
+msg_ok "System packages installed"
 
-# Agent files
-info "Deploying agent files..."
+msg_info "Installing Python packages"
+pct exec ${CT_ID} -- bash -c "
+  pip3 install --quiet --break-system-packages \
+    flask flask-cors requests paramiko python-dotenv \
+    openai anthropic groq cryptography psutil 2>/dev/null || \
+  pip3 install --quiet \
+    flask flask-cors requests paramiko python-dotenv \
+    openai anthropic groq cryptography psutil 2>/dev/null
+" &>/dev/null
+msg_ok "Python packages installed"
+
+# ── Agent Files ──────────────────────────────────────────────────
+msg_info "Deploying FixItBlock agent"
 REPO="https://raw.githubusercontent.com/blockt4875-svg/fixitblock/main"
-pct exec ${CT_ID} -- bash -c "mkdir -p /opt/fixitblock/agent/{ai,hardware,security,scripts,static}"
+pct exec ${CT_ID} -- bash -c "mkdir -p /opt/fixitblock/agent/{ai,hardware,security,scripts,static}" &>/dev/null
 
 if curl -fsSL --max-time 8 "${REPO}/README.md" &>/dev/null; then
   pct exec ${CT_ID} -- bash -c "
     cd /opt/fixitblock
-    for f in agent/proxmox_agent.py agent/server.py agent/cli.py agent/static/index.html \
-              agent/ai/brain.py agent/ai/__init__.py \
-              agent/hardware/profiler.py agent/hardware/__init__.py \
-              agent/security/auth.py agent/security/__init__.py; do
-      curl -fsSL ${REPO}/\$f -o \$f 2>/dev/null && echo \"  pulled: \$f\"
+    FILES='agent/proxmox_agent.py agent/server.py agent/cli.py agent/static/index.html
+           agent/ai/brain.py agent/ai/__init__.py
+           agent/hardware/profiler.py agent/hardware/__init__.py
+           agent/security/auth.py agent/security/__init__.py'
+    for f in \$FILES; do
+      curl -fsSL ${REPO}/\$f -o \$f 2>/dev/null
     done
-  "
+  " &>/dev/null
+  msg_ok "Agent files deployed from GitHub"
 else
-  warn "Cannot reach GitHub — push files manually to /opt/fixitblock/ in the container"
+  msg_error "Cannot reach GitHub — check internet connection"
+  exit 1
 fi
-ok "Agent deployed"
 
-# Config
-info "Writing .env config..."
+# ── Write Config ─────────────────────────────────────────────────
+msg_info "Writing configuration"
 pct exec ${CT_ID} -- bash -c "cat > /opt/fixitblock/.env << ENVEOF
 PROXMOX_HOST=${PVE_HOST}
 PROXMOX_PORT=8006
@@ -161,32 +405,24 @@ SSH_PORT=22
 SSH_USER=root
 SSH_KEY_PATH=/root/.ssh/fixitblock_id
 AI_PROVIDER=${AI_PROV}
-# Cascade: try Anthropic first, fall back to Ollama offline if unavailable
 AI_CASCADE=anthropic,ollama
-# Anthropic (primary - best reasoning)
 ANTHROPIC_API_KEY=$([ "${AI_PROV}" == "anthropic" ] && echo "${AI_KEY}" || echo "")
 ANTHROPIC_MODEL=claude-3-5-sonnet-20241022
-# Ollama (offline fallback - no internet needed)
 OLLAMA_HOST=http://localhost:11434
-OLLAMA_MODEL=${AI_MDL:-llama3.2}
+OLLAMA_MODEL=${OLLAMA_MDL}
 OLLAMA_MODEL2=mistral
 OLLAMA_MODEL3=codellama
-# Other providers (optional)
 OPENAI_API_KEY=$([ "${AI_PROV}" == "openai" ] && echo "${AI_KEY}" || echo "")
 GROQ_API_KEY=$([ "${AI_PROV}" == "groq" ] && echo "${AI_KEY}" || echo "")
-# AI behaviour
 AI_WEB_SEARCH=${WS_EN}
-AI_AUTO_EXECUTE=false
+AI_AUTO_EXECUTE=${AUTO_EXEC}
 AI_SELF_HEAL=true
 AI_COT=true
 AI_MAX_TOKENS=8192
 AI_REQUIRE_APPROVAL=true
 AI_MAX_AUTO_RISK=low
-# Search APIs (optional - DuckDuckGo used if blank)
-BRAVE_SEARCH_KEY=${BRAVE}
-SERPAPI_KEY=${SERP}
-WEB_PORT=${PORT}
-SCAN_INTERVAL=${SINT}
+WEB_PORT=${WEB_PORT}
+SCAN_INTERVAL=${SCAN_INT}
 AUTO_FIX=${AFX_VAL}
 DISK_WARN_PCT=75
 DISK_CRIT_PCT=90
@@ -199,11 +435,11 @@ SESSION_TTL_HOURS=8
 MAX_LOGIN_ATTEMPTS=5
 LOCKOUT_MINUTES=15
 ENVEOF
-chmod 600 /opt/fixitblock/.env"
-ok "Config written"
+chmod 600 /opt/fixitblock/.env" &>/dev/null
+msg_ok "Configuration written"
 
-# Admin account
-info "Creating admin account..."
+# ── Admin Account ────────────────────────────────────────────────
+msg_info "Creating admin account"
 pct exec ${CT_ID} -- bash -c "
   cd /opt/fixitblock
   python3 -c \"
@@ -213,13 +449,12 @@ os.chdir('/opt/fixitblock')
 from dotenv import load_dotenv; load_dotenv('.env')
 from security.auth import credentials
 ok,msg = credentials.create_user('${ADM_USER}','${ADM_PASS}','admin')
-print(msg); sys.exit(0 if ok else 1)
-\"
-"
-ok "Admin '${ADM_USER}' created"
+sys.exit(0 if ok else 1)
+\" 2>/dev/null
+" && msg_ok "Admin account '${ADM_USER}' created" || msg_error "Admin account creation failed"
 
-# Systemd
-info "Installing service..."
+# ── Systemd Service ──────────────────────────────────────────────
+msg_info "Installing systemd service"
 pct exec ${CT_ID} -- bash -c "
 cat > /etc/systemd/system/fixitblock.service << SVC
 [Unit]
@@ -238,45 +473,63 @@ StandardError=append:/var/log/fixitblock.log
 [Install]
 WantedBy=multi-user.target
 SVC
-systemctl daemon-reload && systemctl enable fixitblock && systemctl start fixitblock
-"
-ok "Service installed"
+systemctl daemon-reload && systemctl enable fixitblock && systemctl start fixitblock" &>/dev/null
+msg_ok "Service installed and started"
 
-# Harden
-info "Hardening container..."
+# ── Security Hardening ───────────────────────────────────────────
+msg_info "Applying security hardening"
 pct exec ${CT_ID} -- bash -c "
-  sed -i 's/PasswordAuthentication yes/PasswordAuthentication no/' /etc/ssh/sshd_config
-  ufw --force reset && ufw default deny incoming && ufw default allow outgoing
-  ufw allow ssh && ufw allow ${PORT}/tcp && ufw --force enable
-  systemctl enable fail2ban --now 2>/dev/null || true
-  systemctl restart sshd 2>/dev/null || true
-"
-ok "Hardened"
+  sed -i 's/PasswordAuthentication yes/PasswordAuthentication no/' /etc/ssh/sshd_config 2>/dev/null || true
+  ufw --force reset &>/dev/null
+  ufw default deny incoming &>/dev/null
+  ufw default allow outgoing &>/dev/null
+  ufw allow ssh &>/dev/null
+  ufw allow ${WEB_PORT}/tcp &>/dev/null
+  ufw --force enable &>/dev/null
+  systemctl enable fail2ban --now &>/dev/null || true
+  systemctl restart sshd &>/dev/null || true
+" &>/dev/null
+msg_ok "Security hardening applied"
 
+# ── Ollama ───────────────────────────────────────────────────────
+msg_info "Installing Ollama offline AI"
+pct exec ${CT_ID} -- bash -c "
+  curl -fsSL https://ollama.ai/install.sh | sh &>/dev/null || true
+  systemctl enable ollama --now &>/dev/null || true
+  sleep 3
+" &>/dev/null
+msg_ok "Ollama installed"
 
-# Always install Ollama as offline AI fallback (regardless of primary provider)
-info "Installing Ollama offline AI (fallback when internet is unavailable)..."
-pct exec ${CT_ID} -- bash -c "curl -fsSL https://ollama.ai/install.sh | sh 2>/dev/null || true; systemctl enable ollama --now 2>/dev/null || true; sleep 3" || warn "Ollama install failed"
+msg_info "Pulling AI models in background (${OLLAMA_MDL} + mistral)"
+pct exec ${CT_ID} -- bash -c "
+  nohup bash -c 'ollama pull ${OLLAMA_MDL} && ollama pull mistral' &>/var/log/ollama-pull.log &
+" &>/dev/null
+msg_ok "Model download started (check progress: pct exec ${CT_ID} -- tail -f /var/log/ollama-pull.log)"
 
-# Pull models in background - llama3.2 + mistral always, codellama if ollama is primary
-PULL_MODELS="llama3.2 mistral"
-[[ "$AI_PROV" == "ollama" ]] && PULL_MODELS="llama3.2 mistral codellama"
-info "Pulling Ollama models in background: $PULL_MODELS (takes several minutes)"
-pct exec ${CT_ID} -- bash -c "for M in $PULL_MODELS; do ollama pull $M &; done" &
-
+# ── Done ─────────────────────────────────────────────────────────
 sleep 3
 STATUS=$(pct exec ${CT_ID} -- systemctl is-active fixitblock 2>/dev/null || echo "unknown")
+FINAL_IP=$(pct exec ${CT_ID} -- hostname -I 2>/dev/null | awk '{print $1}' || echo "${CTIP}")
+
+whiptail --title "✓ Installation Complete!" --msgbox \
+"FixItBlock v3 is installed and running!
+
+  Web UI:     http://${FINAL_IP}:${WEB_PORT}
+  Username:   ${ADM_USER}
+  Container:  CT${CT_ID} (${CT_HOST})
+  AI:         ${AI_PROV} + Ollama offline
+  Service:    ${STATUS}
+
+Management commands:
+  pct exec ${CT_ID} -- journalctl -u fixitblock -f
+  pct exec ${CT_ID} -- systemctl restart fixitblock
+  pct exec ${CT_ID} -- nano /opt/fixitblock/.env
+
+Open your browser and go to:
+http://${FINAL_IP}:${WEB_PORT}" \
+26 62
 
 echo ""
-echo -e "${W}╔═══════════════════════════════════════════════════════╗${N}"
-echo -e "${W}║${G}    FixItBlock v3 Installation Complete! ✓            ${W}║${N}"
-echo -e "${W}╚═══════════════════════════════════════════════════════╝${N}"
-echo ""
-echo -e "  ${W}Web UI:${N}    ${C}http://${CTIP}:${PORT}${N}"
-echo -e "  ${W}Login:${N}     ${C}${ADM_USER}${N} / (your password)"
-echo -e "  ${W}AI:${N}        ${C}${AI_PROV}${AI_MDL:+ — ${AI_MDL}}${N}"
-echo -e "  ${W}Service:${N}   ${C}${STATUS}${N}"
-echo ""
-echo -e "  ${C}pct exec ${CT_ID} -- journalctl -u fixitblock -f${N}    # logs"
-echo -e "  ${C}pct exec ${CT_ID} -- nano /opt/fixitblock/.env${N}      # config"
+msg_ok "FixItBlock v3 installed!"
+echo -e " ${BL}➜ Web UI: http://${FINAL_IP}:${WEB_PORT}${CL}"
 echo ""
