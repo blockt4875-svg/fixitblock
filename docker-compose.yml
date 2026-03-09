@@ -1,0 +1,52 @@
+version: "3.9"
+
+services:
+  proxmox-agent:
+    build: .
+    container_name: fixitblock
+    restart: unless-stopped
+    ports:
+      - "7070:7070"      # Web UI + API
+
+    environment:
+      # ── Proxmox API ──────────────────────────────────
+      PROXMOX_HOST: "192.168.1.100"        # Your Proxmox IP or hostname
+      PROXMOX_PORT: "8006"                 # Default Proxmox web port
+      PROXMOX_USER: "root@pam"             # API user
+      PROXMOX_NODE: "pve"                  # Node name (check in PVE UI)
+
+      # Auth: Use EITHER token OR password (token preferred)
+      PROXMOX_TOKEN_NAME: "agent"          # API token name
+      PROXMOX_TOKEN_VALUE: ""              # API token value (leave blank to use password)
+      PROXMOX_PASSWORD: ""                 # Password (only if not using token)
+
+      # ── SSH ──────────────────────────────────────────
+      SSH_HOST: "192.168.1.100"            # SSH host (usually same as Proxmox)
+      SSH_PORT: "22"
+      SSH_USER: "root"
+      SSH_PASSWORD: ""                     # Leave blank if using key file
+      SSH_KEY_PATH: "/root/.ssh/id_rsa"    # Path inside container
+
+      # ── Agent Behavior ───────────────────────────────
+      AUTO_FIX: "false"                    # true = apply all safe fixes automatically
+      SCAN_INTERVAL: "300"                 # Seconds between auto-scans (default 5 min)
+      WEB_PORT: "7070"
+
+      # ── Thresholds ───────────────────────────────────
+      DISK_WARN_PCT:   "75"
+      DISK_CRIT_PCT:   "90"
+      MEM_WARN_PCT:    "80"
+      MEM_CRIT_PCT:    "95"
+      CPU_WARN_PCT:    "85"
+      LOG_MAX_DAYS:    "14"                # Vacuum logs older than N days
+      SNAP_MAX_DAYS:   "30"                # Flag snapshots older than N days
+      BACKUP_MAX_DAYS: "7"                 # Flag backups older than N days
+
+    volumes:
+      # SSH key for passwordless auth (recommended)
+      - ~/.ssh/id_rsa:/root/.ssh/id_rsa:ro
+      # Persist logs
+      - ./logs:/var/log
+
+    # CLI mode example (override CMD):
+    # command: ["python", "cli.py", "scan", "--interactive"]

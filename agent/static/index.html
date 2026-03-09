@@ -1,0 +1,491 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>FixItBlock — AI Maintenance Agent</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;700&family=Black+Ops+One&family=Bebas+Neue&display=swap" rel="stylesheet">
+<style>
+:root{--bg:#07090d;--bg2:#0c1018;--bg3:#111620;--bg4:#161d28;--border:#1a2535;--border2:#243045;--text:#b8ccd8;--dim:#3a5060;--mid:#6a8090;--accent:#00e5ff;--a2:#0099bb;--brand:#ff6b1a;--b2:#cc4400;--crit:#ff4444;--warn:#ffaa00;--info:#4488ff;--ok:#00cc66;--ai:#a855f7;--ai2:#7c3aed;--mono:'JetBrains Mono',monospace;--disp:'Black Ops One',cursive}
+*{box-sizing:border-box;margin:0;padding:0}html,body{height:100%;overflow:hidden}
+body{background:var(--bg);color:var(--text);font-family:var(--mono);font-size:12px;line-height:1.5}
+body::after{content:'';position:fixed;inset:0;background:repeating-linear-gradient(0deg,transparent,transparent 3px,rgba(0,0,0,.05) 3px,rgba(0,0,0,.05) 4px);pointer-events:none;z-index:9999}
+/* LOGIN */
+#ls{position:fixed;inset:0;background:var(--bg);display:flex;align-items:center;justify-content:center;z-index:1000}
+.lb{background:var(--bg2);border:1px solid var(--border2);padding:44px 38px;width:370px;position:relative}
+.lb::before{content:'';position:absolute;top:0;left:0;right:0;height:2px;background:linear-gradient(90deg,var(--brand),var(--accent))}
+.ll{text-align:center;margin-bottom:28px}
+.wm{font-family:var(--disp);font-size:30px;letter-spacing:2px}
+.wm .f{color:#fff}.wm .i{color:var(--brand)}.wm .b{color:var(--accent)}
+.lsub{font-size:9px;letter-spacing:4px;color:var(--dim);text-transform:uppercase;margin-top:4px}
+.lf{margin-bottom:14px}
+.lf label{display:block;font-size:9px;letter-spacing:2px;text-transform:uppercase;color:var(--dim);margin-bottom:5px}
+.lf input{width:100%;background:var(--bg3);border:1px solid var(--border2);color:var(--text);font-family:var(--mono);font-size:13px;padding:10px 12px;outline:none;transition:border-color .15s}
+.lf input:focus{border-color:var(--accent)}
+.lbtn{width:100%;padding:11px;background:var(--brand);color:#fff;font-family:var(--disp);font-size:16px;letter-spacing:2px;border:none;cursor:pointer;transition:background .15s;margin-top:6px}
+.lbtn:hover{background:var(--b2)}.lbtn:disabled{opacity:.5;cursor:not-allowed}
+.lerr{color:var(--crit);font-size:10px;text-align:center;margin-top:8px;min-height:14px}
+.lnote{font-size:9px;color:var(--dim);text-align:center;margin-top:10px}
+/* HEADER */
+header{height:50px;background:var(--bg2);border-bottom:1px solid var(--border);display:flex;align-items:center;padding:0 16px;gap:12px;flex-shrink:0;z-index:50}
+.lwm{font-family:var(--disp);font-size:20px;letter-spacing:1px;display:flex}
+.lwm .f{color:#fff}.lwm .i{color:var(--brand)}.lwm .b{color:var(--accent);letter-spacing:2px}
+.lsvg{width:26px;height:26px;flex-shrink:0}
+.nbadge{font-size:9px;color:var(--dim);letter-spacing:2px;text-transform:uppercase;padding:2px 7px;border:1px solid var(--border);background:var(--bg3)}
+.hgap{flex:1}
+.swrap{flex:1;max-width:240px;display:none}.swrap.on{display:block}
+.slbl{font-size:8px;letter-spacing:2px;color:var(--accent);margin-bottom:3px;text-transform:uppercase}
+.sbar{height:2px;background:var(--border);overflow:hidden}
+.sfill{height:100%;background:var(--accent);box-shadow:0 0 8px var(--accent);width:30%;animation:ind 1.4s ease-in-out infinite}
+@keyframes ind{0%{transform:translateX(-100%)}100%{transform:translateX(450%)}}
+.cpill{display:flex;align-items:center;gap:5px;font-size:9px;color:var(--dim);letter-spacing:1px}
+.cdot{width:6px;height:6px;border-radius:50%;background:var(--dim)}.cdot.ok{background:var(--ok);box-shadow:0 0 5px var(--ok);animation:blink 2.5s infinite}.cdot.err{background:var(--crit)}
+@keyframes blink{0%,100%{opacity:1}50%{opacity:.3}}
+.aipill{display:flex;align-items:center;gap:5px;font-size:9px;color:var(--ai);letter-spacing:1px;padding:2px 8px;border:1px solid var(--ai2);background:rgba(168,85,247,.06)}
+.aidot{width:5px;height:5px;border-radius:50%;background:var(--ai);animation:blink 1.8s infinite}
+.htime{font-size:10px;color:var(--dim)}.ubtn{font-size:9px;color:var(--mid);padding:3px 9px;border:1px solid var(--border);background:var(--bg3);cursor:pointer;transition:all .12s}.ubtn:hover{border-color:var(--accent);color:var(--accent)}
+/* SHELL */
+.shell{display:flex;height:calc(100vh - 50px);overflow:hidden}
+/* NAV */
+nav{width:192px;flex-shrink:0;background:var(--bg2);border-right:1px solid var(--border);display:flex;flex-direction:column;overflow-y:auto}
+.ns{font-size:8px;letter-spacing:3px;color:var(--dim);text-transform:uppercase;padding:11px 13px 3px}
+.ni{display:flex;align-items:center;gap:7px;padding:7px 13px;cursor:pointer;color:var(--mid);font-size:11px;border-left:2px solid transparent;transition:all .1s;white-space:nowrap}
+.ni:hover{color:var(--text);background:rgba(255,255,255,.02)}.ni.active{color:var(--accent);border-left-color:var(--accent);background:rgba(0,229,255,.04)}
+.ni.aii{color:var(--ai)}.ni.aii.active{color:var(--ai);border-left-color:var(--ai);background:rgba(168,85,247,.05)}
+.nic{width:15px;text-align:center;font-size:12px;flex-shrink:0}
+.nct{margin-left:auto;font-size:9px;min-width:15px;height:15px;line-height:15px;text-align:center;border-radius:8px;padding:0 4px;background:var(--bg3);color:var(--mid);flex-shrink:0}
+.nct.red{background:var(--crit);color:#fff}.nct.yel{background:var(--warn);color:#000}
+.ndiv{height:1px;background:var(--border);margin:4px 0}
+.nfoot{margin-top:auto;padding:11px 13px;border-top:1px solid var(--border)}
+.afrow{display:flex;align-items:center;justify-content:space-between;font-size:9px;color:var(--mid);margin-bottom:5px}
+.pill{padding:1px 7px;border-radius:10px;font-size:8px;letter-spacing:1px;font-weight:600;text-transform:uppercase}
+.pill.on{background:rgba(0,204,102,.1);color:var(--ok);border:1px solid var(--ok)}.pill.off{background:var(--bg3);color:var(--dim);border:1px solid var(--border)}
+.bfoot{margin-top:8px;padding-top:7px;border-top:1px solid var(--border);font-size:8px;letter-spacing:2px;color:var(--dim)}
+/* PANELS */
+main{flex:1;display:flex;flex-direction:column;overflow:hidden}
+.panel{display:none;flex:1;flex-direction:column;overflow:hidden}.panel.active{display:flex}
+/* STATS */
+.stats{display:grid;grid-template-columns:repeat(5,1fr);border-bottom:1px solid var(--border);flex-shrink:0}
+.sc{padding:8px 13px;border-right:1px solid var(--border)}.sc:last-child{border-right:none}
+.scl{font-size:8px;letter-spacing:2px;text-transform:uppercase;color:var(--dim);margin-bottom:3px}
+.scv{font-family:'Bebas Neue',cursive;font-size:27px;line-height:1;color:#fff;letter-spacing:1px}
+.scv.red{color:var(--crit)}.scv.yel{color:var(--warn)}.scv.grn{color:var(--ok)}.scv.blu{color:var(--accent)}.scv.pur{color:var(--ai)}
+.scs{font-size:8px;color:var(--dim);margin-top:1px}
+/* TOOLBAR */
+.tb{display:flex;align-items:center;gap:7px;padding:8px 13px;border-bottom:1px solid var(--border);flex-shrink:0;background:var(--bg2)}
+.tbt{font-family:'Bebas Neue',cursive;font-size:16px;letter-spacing:3px;color:#fff;flex:1}
+.ftabs{display:flex;gap:1px;background:var(--border)}
+.ftab{padding:4px 9px;font-family:var(--mono);font-size:8px;letter-spacing:1.5px;cursor:pointer;color:var(--dim);text-transform:uppercase;background:var(--bg3);transition:all .1s}
+.ftab:hover{color:var(--text)}.ftab.active{color:var(--accent);background:var(--bg4)}
+.btn{display:inline-flex;align-items:center;gap:4px;padding:4px 10px;font-family:var(--mono);font-size:8px;letter-spacing:1.5px;text-transform:uppercase;cursor:pointer;border:1px solid var(--border2);background:var(--bg3);color:var(--mid);transition:all .12s;flex-shrink:0}
+.btn:hover{border-color:var(--a2);color:var(--accent)}.btn.primary{border-color:var(--a2);color:var(--accent);background:rgba(0,229,255,.04)}.btn.primary:hover{background:rgba(0,229,255,.1)}
+.btn.aib{border-color:var(--ai2);color:var(--ai);background:rgba(168,85,247,.04)}.btn.aib:hover{background:rgba(168,85,247,.12)}
+.btn:disabled{opacity:.3;cursor:not-allowed;pointer-events:none}
+/* ISSUES */
+.iscr{flex:1;overflow-y:auto;padding:9px}
+.ilist{display:flex;flex-direction:column;gap:2px}
+.issue{display:grid;grid-template-columns:58px 1fr auto;gap:9px;align-items:start;padding:9px 11px;background:var(--bg2);border:1px solid var(--border);border-left:3px solid var(--border);animation:fi .2s ease both}
+@keyframes fi{from{opacity:0;transform:translateY(3px)}to{opacity:1}}
+.issue:hover{background:var(--bg3)}.issue.crit{border-left-color:var(--crit)}.issue.warn{border-left-color:var(--warn)}.issue.info{border-left-color:var(--info)}.issue.fixed{opacity:.4}
+.im{display:flex;flex-direction:column;gap:3px;align-items:flex-start}
+.sev{font-size:8px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;padding:2px 5px;border-radius:2px}
+.sev.crit{background:rgba(255,68,68,.1);color:var(--crit);border:1px solid rgba(255,68,68,.25)}
+.sev.warn{background:rgba(255,170,0,.1);color:var(--warn);border:1px solid rgba(255,170,0,.25)}
+.sev.info{background:rgba(68,136,255,.1);color:var(--info);border:1px solid rgba(68,136,255,.25)}
+.cat{font-size:8px;color:var(--dim);letter-spacing:1px;text-transform:uppercase}
+.it{font-size:12px;font-weight:500;color:#e0eaf0;margin-bottom:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.id2{font-size:10px;color:var(--mid);line-height:1.6;word-break:break-word}
+.ifh{margin-top:3px;font-size:9px;color:var(--a2)}.ifr{margin-top:3px;font-size:9px;color:var(--ok);font-style:italic}.its{margin-top:3px;font-size:8px;color:var(--dim)}
+.ia{display:flex;flex-direction:column;align-items:flex-end;gap:3px;min-width:85px}
+.fxb{padding:4px 9px;font-family:var(--mono);font-size:8px;letter-spacing:1.5px;text-transform:uppercase;cursor:pointer;border:1px solid var(--a2);background:rgba(0,153,187,.05);color:var(--accent);transition:all .12s}.fxb:hover{background:rgba(0,153,187,.18)}.fxb:disabled{opacity:.3;cursor:not-allowed}
+.aifxb{padding:4px 8px;font-family:var(--mono);font-size:8px;letter-spacing:1px;text-transform:uppercase;cursor:pointer;border:1px solid var(--ai2);background:rgba(168,85,247,.05);color:var(--ai);transition:all .12s}.aifxb:hover{background:rgba(168,85,247,.15)}
+.ftag{font-size:9px;color:var(--ok);letter-spacing:1px}.mtag{font-size:9px;color:var(--dim);letter-spacing:1px}
+/* STATE */
+.state{flex:1;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:9px;padding:40px}
+.si{font-size:34px;opacity:.5}.st{font-family:'Bebas Neue',cursive;font-size:21px;letter-spacing:4px;color:var(--ok)}.st.err{color:var(--crit)}.st.muted{color:var(--dim)}.ss{font-size:10px;color:var(--dim);text-align:center;max-width:300px;line-height:1.8}
+/* AI PANEL */
+.aih{padding:9px 15px;border-bottom:1px solid var(--border);background:var(--bg2);display:flex;align-items:center;gap:9px;flex-shrink:0}
+.aiht{font-family:'Bebas Neue',cursive;font-size:16px;letter-spacing:3px;color:var(--ai);flex:1}
+.aiprov{font-size:8px;letter-spacing:1px;padding:2px 7px;border:1px solid var(--ai2);color:var(--ai);text-transform:uppercase}
+.aims{flex:1;overflow-y:auto;padding:11px;display:flex;flex-direction:column;gap:9px}
+.msg{max-width:86%;animation:fi .2s ease}
+.msg.user{align-self:flex-end}.msg.asst{align-self:flex-start}
+.mb{padding:9px 13px;line-height:1.7;font-size:11px;white-space:pre-wrap;word-break:break-word}
+.msg.user .mb{background:rgba(0,229,255,.07);border:1px solid rgba(0,229,255,.2);color:var(--text)}
+.msg.asst .mb{background:rgba(168,85,247,.07);border:1px solid rgba(168,85,247,.2);color:var(--text)}
+.mmeta{font-size:8px;color:var(--dim);letter-spacing:1px;margin-top:3px;padding:0 2px}.msg.user .mmeta{text-align:right}
+.srcrow{display:flex;flex-wrap:wrap;gap:3px;margin-top:5px}
+.srcc{font-size:8px;padding:2px 6px;background:var(--bg3);border:1px solid var(--border2);color:var(--a2);cursor:pointer;text-decoration:none;letter-spacing:.5px;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.scblk{margin-top:7px;background:var(--bg);border:1px solid var(--border2);padding:9px 11px}
+.sclbl{font-size:8px;letter-spacing:2px;color:var(--ai);text-transform:uppercase;margin-bottom:5px}
+.sccode{color:#a8d8a8;white-space:pre;overflow-x:auto;line-height:1.6;font-size:10px}
+.scacts{display:flex;gap:4px;margin-top:7px}
+.trow{display:flex;flex-wrap:wrap;gap:3px;margin-bottom:5px}
+.tchip{font-size:8px;padding:2px 7px;background:rgba(168,85,247,.08);border:1px solid rgba(168,85,247,.2);color:var(--ai)}
+.aityp{display:none;align-self:flex-start;padding:9px 13px;background:rgba(168,85,247,.06);border:1px solid rgba(168,85,247,.2)}
+.aityp.on{display:block}
+.tdots span{animation:dot 1.4s infinite;display:inline-block;color:var(--ai)}
+.tdots span:nth-child(2){animation-delay:.2s}.tdots span:nth-child(3){animation-delay:.4s}
+@keyframes dot{0%,80%,100%{opacity:.2}40%{opacity:1}}
+.aiinr{border-top:1px solid var(--border);padding:9px 11px;display:flex;gap:7px;flex-shrink:0;background:var(--bg2)}
+.aiinp{flex:1;background:var(--bg3);border:1px solid var(--border2);color:var(--text);font-family:var(--mono);font-size:12px;padding:9px 11px;outline:none;resize:none;height:38px;max-height:120px;line-height:1.5}
+.aiinp:focus{border-color:var(--ai)}
+.aisnd{padding:9px 15px;background:var(--ai2);color:#fff;font-family:var(--disp);font-size:14px;letter-spacing:2px;border:none;cursor:pointer;transition:background .12s;flex-shrink:0}.aisnd:hover{background:var(--ai)}.aisnd:disabled{opacity:.4;cursor:not-allowed}
+.aiqb{display:flex;gap:4px;flex-wrap:wrap;padding:4px 11px 0;flex-shrink:0}
+.qb{font-size:8px;padding:3px 8px;border:1px solid var(--border2);background:var(--bg3);color:var(--mid);cursor:pointer;letter-spacing:.5px;transition:all .1s}.qb:hover{border-color:var(--ai2);color:var(--ai)}
+/* SEARCH */
+.srchw{padding:13px;flex-shrink:0;border-bottom:1px solid var(--border);background:var(--bg2)}
+.srchrow{display:flex;gap:7px}.srchi{flex:1;background:var(--bg3);border:1px solid var(--border2);color:var(--text);font-family:var(--mono);font-size:12px;padding:9px 13px;outline:none}.srchi:focus{border-color:var(--accent)}
+.srchbtn{padding:9px 16px;background:var(--brand);color:#fff;font-family:var(--disp);font-size:14px;letter-spacing:2px;border:none;cursor:pointer;transition:background .12s}.srchbtn:hover{background:var(--b2)}
+.sfilts{display:flex;gap:4px;margin-top:7px}.sflt{font-size:8px;padding:3px 8px;border:1px solid var(--border);background:var(--bg3);color:var(--dim);cursor:pointer;letter-spacing:1px;text-transform:uppercase;transition:all .1s}.sflt:hover{color:var(--text)}.sflt.active{border-color:var(--accent);color:var(--accent);background:rgba(0,229,255,.05)}
+.rscr{flex:1;overflow-y:auto;padding:9px}
+.ritem{padding:11px 13px;background:var(--bg2);border:1px solid var(--border);border-left:3px solid var(--border);margin-bottom:3px;cursor:pointer;transition:all .1s;animation:fi .2s ease}
+.ritem:hover{background:var(--bg3);border-left-color:var(--accent)}.ritem.scr{border-left-color:var(--ai)}
+.rt{font-size:12px;color:var(--accent);margin-bottom:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ru{font-size:8px;color:var(--dim);margin-bottom:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.rs{font-size:10px;color:var(--mid);line-height:1.6}
+.ract{display:flex;gap:4px;margin-top:7px}
+/* HARDWARE */
+.hwscr{flex:1;overflow-y:auto;padding:11px}
+.hwg{display:grid;grid-template-columns:repeat(2,1fr);gap:7px}
+.hwc{background:var(--bg2);border:1px solid var(--border);padding:13px}
+.hwct{font-size:9px;letter-spacing:3px;text-transform:uppercase;color:var(--accent);margin-bottom:9px}
+.hwr{display:flex;justify-content:space-between;align-items:center;padding:3px 0;border-bottom:1px solid var(--border);font-size:10px}.hwr:last-child{border-bottom:none}
+.hwk{color:var(--mid)}.hwv{color:var(--text);text-align:right;max-width:55%;word-break:break-all}
+.hwv.ok{color:var(--ok)}.hwv.err{color:var(--crit)}.hwv.warn{color:var(--warn)}
+/* HISTORY */
+.hstr{border-top:1px solid var(--border);padding:6px 13px;display:flex;align-items:center;gap:9px;flex-shrink:0;background:var(--bg2)}
+.hslbl{font-size:8px;letter-spacing:2px;color:var(--dim);text-transform:uppercase;flex-shrink:0}
+.spark{flex:1;height:26px;display:flex;align-items:flex-end;gap:2px}
+.spk{flex:1;min-height:2px;max-height:22px;background:var(--border);transition:height .3s}.spk.has-crit{background:var(--crit);opacity:.7}.spk.has-warn{background:var(--warn);opacity:.6}.spk.clean{background:var(--ok);opacity:.5}.spk:hover{opacity:1!important}
+.hstat{font-size:9px;color:var(--dim);flex-shrink:0}
+/* TOASTS */
+.toasts{position:fixed;bottom:13px;right:13px;display:flex;flex-direction:column;gap:4px;z-index:9000}
+.toast{padding:7px 12px;background:var(--bg3);border:1px solid var(--border2);font-size:10px;max-width:270px;animation:fi .2s ease}
+.toast.ok{border-left:3px solid var(--ok);color:var(--ok)}.toast.err{border-left:3px solid var(--crit);color:var(--crit)}.toast.info{border-left:3px solid var(--accent);color:var(--accent)}.toast.ai{border-left:3px solid var(--ai);color:var(--ai)}
+::-webkit-scrollbar{width:3px;height:3px}::-webkit-scrollbar-track{background:transparent}::-webkit-scrollbar-thumb{background:var(--border2)}
+</style>
+</head>
+<body>
+<div class="toasts" id="toasts"></div>
+
+<!-- LOGIN -->
+<div id="ls">
+  <div class="lb" id="lb">
+    <div class="ll"><div class="wm"><span class="f">FIX</span><span class="i">IT</span><span class="b">BLOCK</span></div><div class="lsub" id="lsub">AI Maintenance Agent</div></div>
+    <div class="lf"><label>Username</label><input type="text" id="lu" autocomplete="username" placeholder="admin"></div>
+    <div class="lf"><label>Password</label><input type="password" id="lp" autocomplete="current-password" placeholder="••••••••••••"></div>
+    <div class="lf" id="lcf" style="display:none"><label>Confirm Password</label><input type="password" id="lpc" placeholder="••••••••••••"></div>
+    <button class="lbtn" id="lbtn" onclick="doLogin()">ENTER</button>
+    <div class="lerr" id="lerr"></div>
+    <div class="lnote" id="lnote"></div>
+  </div>
+</div>
+
+<!-- APP -->
+<div id="app" style="display:none;height:100%;flex-direction:column">
+<header>
+  <svg class="lsvg" viewBox="0 0 28 28" fill="none">
+    <rect x="2" y="9" width="24" height="17" rx="1" fill="rgba(255,107,26,.12)" stroke="#ff6b1a" stroke-width="1.1"/>
+    <path d="M2 9L14 2L26 9" fill="rgba(255,107,26,.2)" stroke="#ff6b1a" stroke-width="1.1" stroke-linejoin="round"/>
+    <path d="M10 18L15 13M15 13C16.3 11.7 18.5 11.7 19.3 12.5C20.1 13.3 20 15.3 18.7 16.6C17.4 17.9 15.3 18 14.5 17.2L10 21.5L8.8 20.3Z" stroke="#00e5ff" stroke-width="1.3" stroke-linecap="round"/>
+    <circle cx="18" cy="13" r="1" fill="#00e5ff"/>
+  </svg>
+  <div class="lwm"><span class="f">FIX</span><span class="i">IT</span><span class="b">BLOCK</span></div>
+  <div class="nbadge" id="nbadge">—</div>
+  <div class="hgap"></div>
+  <div class="swrap" id="sw"><div class="slbl">Scanning…</div><div class="sbar"><div class="sfill"></div></div></div>
+  <div class="aipill" id="aipill" style="display:none"><div class="aidot"></div><span id="aiplbl">AI</span></div>
+  <div class="cpill"><div class="cdot" id="cdot"></div><span id="clbl">Connecting</span></div>
+  <div class="htime" id="htime">—</div>
+  <button class="ubtn" id="ubtn" onclick="doLogout()">⏻ LOGOUT</button>
+</header>
+<div class="shell">
+<nav>
+  <div class="ns">Monitor</div>
+  <div class="ni active" onclick="showP('issues',this)"><span class="nic">◈</span>All Issues<span class="nct" id="nc-all">—</span></div>
+  <div class="ni" onclick="showP('issues',this);setFilt('critical')"><span class="nic" style="color:var(--crit)">⬥</span>Critical<span class="nct red" id="nc-crit">0</span></div>
+  <div class="ni" onclick="showP('issues',this);setFilt('warning')"><span class="nic" style="color:var(--warn)">⬦</span>Warnings<span class="nct yel" id="nc-warn">0</span></div>
+  <div class="ni" onclick="showP('issues',this);setFilt('fixable')"><span class="nic" style="color:var(--accent)">⚡</span>Fixable<span class="nct" id="nc-fix">0</span></div>
+  <div class="ndiv"></div>
+  <div class="ns">Categories</div>
+  <div class="ni" onclick="showP('issues',this);setCat('disk')"><span class="nic">💾</span>Disk &amp; Storage<span class="nct" id="cc-disk">0</span></div>
+  <div class="ni" onclick="showP('issues',this);setCat('vm')"><span class="nic">🖥</span>VMs &amp; LXC<span class="nct" id="cc-vm">0</span></div>
+  <div class="ni" onclick="showP('issues',this);setCat('backup')"><span class="nic">📦</span>Backups<span class="nct" id="cc-backup">0</span></div>
+  <div class="ni" onclick="showP('issues',this);setCat('log')"><span class="nic">📋</span>Logs<span class="nct" id="cc-log">0</span></div>
+  <div class="ni" onclick="showP('issues',this);setCat('snapshot')"><span class="nic">📸</span>Snapshots<span class="nct" id="cc-snapshot">0</span></div>
+  <div class="ndiv"></div>
+  <div class="ns">Intelligence</div>
+  <div class="ni aii" onclick="showP('ai',this)"><span class="nic">🧠</span>AI Assistant</div>
+  <div class="ni aii" onclick="showP('srch',this)"><span class="nic">🔍</span>Script Search</div>
+  <div class="ni" onclick="showP('hw',this)"><span class="nic">🔧</span>Hardware</div>
+  <div class="nfoot">
+    <div class="afrow"><span>Auto-Fix</span><span class="pill off" id="afpill">OFF</span></div>
+    <div class="bfoot"><span style="color:var(--brand)">Fix</span><span style="color:var(--accent)">ItBlock</span> v3 AI</div>
+  </div>
+</nav>
+<main>
+
+<!-- ISSUES -->
+<div class="panel active" id="panel-issues">
+  <div class="stats">
+    <div class="sc"><div class="scl">Critical</div><div class="scv red" id="s-crit">—</div><div class="scs">issues</div></div>
+    <div class="sc"><div class="scl">Warnings</div><div class="scv yel" id="s-warn">—</div><div class="scs">issues</div></div>
+    <div class="sc"><div class="scl">Fixable</div><div class="scv blu" id="s-fix">—</div><div class="scs">auto-resolvable</div></div>
+    <div class="sc"><div class="scl">Fixed</div><div class="scv grn" id="s-fixed">—</div><div class="scs">this session</div></div>
+    <div class="sc"><div class="scl">Scan Time</div><div class="scv pur" id="s-dur">—</div><div class="scs">seconds</div></div>
+  </div>
+  <div class="tb">
+    <div class="tbt" id="tbt">All Issues</div>
+    <div class="ftabs">
+      <div class="ftab active" id="ft-all" onclick="setTab('all')">ALL</div>
+      <div class="ftab" id="ft-fixable" onclick="setTab('fixable')">FIXABLE</div>
+      <div class="ftab" id="ft-fixed" onclick="setTab('fixed')">FIXED</div>
+    </div>
+    <button class="btn" id="scanbtn" onclick="triggerScan()">⟳ SCAN</button>
+    <button class="btn primary" id="fixabtn" onclick="fixAll()">⚡ FIX ALL</button>
+    <button class="btn aib" onclick="aiAsk('Analyze all current issues, prioritize by risk, and suggest an action plan')">🧠 ASK AI</button>
+  </div>
+  <div class="iscr" id="iscr"><div class="state"><div class="si">◌</div><div class="st muted">Waiting for scan</div><div class="ss">The agent will scan automatically after connecting.</div></div></div>
+  <div class="hstr">
+    <div class="hslbl" style="color:var(--brand)">FixItBlock</div>
+    <div class="hslbl" style="margin-left:3px">· History</div>
+    <div class="spark" id="spark"></div>
+    <div class="hstat" id="hstat">—</div>
+  </div>
+</div>
+
+<!-- AI -->
+<div class="panel" id="panel-ai">
+  <div class="aih">
+    <div class="aiht">🧠 AI Assistant</div>
+    <div class="aiprov" id="aiprovbdg">Loading…</div>
+    <button class="btn" onclick="clearMem()">↺ CLEAR</button>
+  </div>
+  <div class="aims" id="aims">
+    <div class="msg asst"><div class="mb">👋 I'm the FixItBlock AI — your embedded Proxmox expert.<br><br>I can search the internet for fixes and scripts, reason through infrastructure problems, generate hardware-optimized bash scripts, analyze your logs, and suggest optimizations based on your exact hardware profile.<br><br>What do you need?</div><div class="mmeta">FixItBlock AI · Ready</div></div>
+  </div>
+  <div class="aityp" id="aityp"><div class="tdots"><span>●</span><span>●</span><span>●</span></div></div>
+  <div class="aiqb">
+    <div class="qb" onclick="aiAsk('Analyze current issues and suggest fix priority order')">📊 Analyze Issues</div>
+    <div class="qb" onclick="aiAsk('Search for latest Proxmox optimization and performance scripts')">🔍 Find Scripts</div>
+    <div class="qb" onclick="aiAsk('Analyze recent system logs for critical errors and patterns')">📋 Analyze Logs</div>
+    <div class="qb" onclick="aiAsk('Recommend hardware optimizations based on my system profile')">🔧 HW Optimize</div>
+    <div class="qb" onclick="aiAsk('Check for CVEs or known security issues on my Proxmox version')">🛡 Security Check</div>
+    <div class="qb" onclick="aiAsk('How can I improve ZFS performance for my storage setup?')">💾 ZFS Tuning</div>
+  </div>
+  <div class="aiinr">
+    <textarea class="aiinp" id="aiinp" placeholder="Ask anything about your Proxmox environment…" onkeydown="aikd(event)"></textarea>
+    <button class="aisnd" id="aisnd" onclick="sendMsg()">SEND</button>
+  </div>
+</div>
+
+<!-- SEARCH -->
+<div class="panel" id="panel-srch">
+  <div class="srchw">
+    <div class="srchrow">
+      <input class="srchi" id="srchi" placeholder="Search Proxmox fixes, scripts, CVEs, forum posts…" onkeydown="if(event.key==='Enter')doSearch()">
+      <button class="srchbtn" onclick="doSearch()">SEARCH</button>
+    </div>
+    <div class="sfilts">
+      <div class="sflt active" id="sf-all"     onclick="setSF('all',this)">ALL</div>
+      <div class="sflt"        id="sf-scripts"  onclick="setSF('scripts',this)">SCRIPTS</div>
+      <div class="sflt"        id="sf-forum"    onclick="setSF('forum',this)">FORUM</div>
+      <div class="sflt"        id="sf-cve"      onclick="setSF('cve',this)">CVE / SECURITY</div>
+      <div class="sflt"        id="sf-docs"     onclick="setSF('docs',this)">DOCS</div>
+    </div>
+  </div>
+  <div class="rscr" id="rscr"><div class="state"><div class="si">🔍</div><div class="st muted">Script Search</div><div class="ss">Search the internet for Proxmox scripts, fixes, CVEs, and forum solutions. AI will summarize and adapt results to your hardware.</div></div></div>
+</div>
+
+<!-- HARDWARE -->
+<div class="panel" id="panel-hw">
+  <div class="tb">
+    <div class="tbt">Hardware Profile</div>
+    <button class="btn" onclick="refreshHW()">⟳ REFRESH</button>
+    <button class="btn aib" onclick="aiAsk('Based on my full hardware profile, what specific Proxmox and Linux optimizations do you recommend?')">🧠 AI OPTIMIZE</button>
+  </div>
+  <div class="hwscr" id="hwscr"><div class="state"><div class="si">🔧</div><div class="st muted">Loading Hardware Profile</div></div></div>
+</div>
+
+</main>
+</div>
+</div>
+
+<script>
+"use strict";
+let tok=sessionStorage.getItem("fib_tok")||"";
+let issues=[],hw={},activeFilt="all",activeCat=null,sfilt="all",prevScan=false;
+const SEVO={critical:0,warning:1,info:2};
+const CATI={disk:"💾",vm:"🖥",backup:"📦",log:"📋",snapshot:"📸"};
+const TTLS={all:"All Issues",critical:"Critical Issues",warning:"Warnings",fixable:"Fixable Issues",fixed:"Fixed Issues",disk:"Disk & Storage",vm:"VMs & LXC",backup:"Backups",log:"Logs",snapshot:"Snapshots"};
+
+document.addEventListener("DOMContentLoaded",async()=>{
+  tick();
+  try{const s=await pub("/api/auth/status");if(!s.initialized){document.getElementById("lcf").style.display="block";document.getElementById("lbtn").textContent="CREATE ACCOUNT";document.getElementById("lsub").textContent="FIRST TIME SETUP";document.getElementById("lnote").textContent="Create your admin account to get started";}}catch(e){}
+  if(tok){try{await req("/api/status");showApp();}catch(e){tok="";sessionStorage.removeItem("fib_tok");}}
+  document.getElementById("lp").addEventListener("keydown",e=>{if(e.key==="Enter")doLogin();});
+});
+function tick(){const e=document.getElementById("htime");if(e)e.textContent=new Date().toLocaleTimeString();setTimeout(tick,1000);}
+
+async function pub(p,m="GET",b=null){const o={method:m,headers:{"Content-Type":"application/json"}};if(b)o.body=JSON.stringify(b);const r=await fetch(p,o);return r.json();}
+async function req(p,m="GET",b=null){const o={method:m,headers:{"Content-Type":"application/json","X-Auth-Token":tok}};if(b)o.body=JSON.stringify(b);const r=await fetch(p,o);if(r.status===401){tok="";sessionStorage.removeItem("fib_tok");location.reload();}return r.json();}
+
+async function doLogin(){
+  const btn=document.getElementById("lbtn"),u=document.getElementById("lu").value.trim(),p=document.getElementById("lp").value,err=document.getElementById("lerr");
+  if(!u||!p){err.textContent="Username and password required";return;}
+  btn.disabled=true;err.textContent="";
+  try{
+    const cf=document.getElementById("lcf").style.display!=="none";
+    if(cf){const pc=document.getElementById("lpc").value;if(p!==pc){err.textContent="Passwords do not match";btn.disabled=false;return;}
+      const r=await pub("/api/auth/setup","POST",{username:u,password:p});if(!r.success){err.textContent=r.error;btn.disabled=false;return;}
+    }
+    const r=await pub("/api/auth/login","POST",{username:u,password:p});
+    if(!r.success){err.textContent=r.error||"Login failed";btn.disabled=false;return;}
+    tok=r.data.token;sessionStorage.setItem("fib_tok",tok);
+    document.getElementById("ubtn").textContent=`⏻ ${u}`;showApp();
+  }catch(e){err.textContent=e.message||"Login failed";btn.disabled=false;}
+}
+function showApp(){document.getElementById("ls").style.display="none";const a=document.getElementById("app");a.style.display="flex";startPoll();loadHW();loadAiSt();pollHist();}
+async function doLogout(){try{await req("/api/auth/logout","POST");}catch(e){}tok="";sessionStorage.removeItem("fib_tok");location.reload();}
+
+function startPoll(){pollSt();setInterval(pollSt,5000);setInterval(pollIs,9000);setInterval(pollHist,30000);}
+async function pollSt(){
+  try{
+    const d=await req("/api/status");const s=d.summary||{};
+    const dot=document.getElementById("cdot"),lbl=document.getElementById("clbl");
+    if(d.connected){dot.className="cdot ok";lbl.textContent=s.host||"Connected";
+      st("nbadge",s.node?`NODE: ${s.node}`:"—");
+      const p=document.getElementById("afpill");p.textContent=s.auto_fix?"ON":"OFF";p.className="pill "+(s.auto_fix?"on":"off");
+      document.getElementById("sw").classList.toggle("on",!!s.scanning);
+      st("s-crit",s.counts?.critical??"—");st("s-warn",s.counts?.warning??"—");st("s-fix",s.fixable??"—");st("s-fixed",s.fixed??"—");st("s-dur",s.scan_duration!=null?s.scan_duration+"s":"—");
+      if(prevScan&&!s.scanning){await pollIs();await pollHist();toast("ok","Scan complete");}
+      prevScan=!!s.scanning;
+    }else{dot.className="cdot err";lbl.textContent=(d.connect_error||"Disconnected").slice(0,40);}
+    if(d.ai?.available){document.getElementById("aipill").style.display="flex";st("aiplbl",(d.ai.provider||"AI").toUpperCase());}
+  }catch(e){}
+}
+async function pollIs(){try{issues=await req("/api/issues");updNav();renderIs();}catch(e){}}
+async function pollHist(){try{const h=await req("/api/history");renderSpark(h);}catch(e){}}
+
+function showP(id,el){
+  document.querySelectorAll(".panel").forEach(p=>p.classList.remove("active"));
+  document.getElementById("panel-"+id).classList.add("active");
+  document.querySelectorAll(".ni").forEach(n=>n.classList.remove("active"));
+  if(el)el.classList.add("active");
+  if(id==="hw"&&!hw.cpu_model)loadHW();
+}
+function updNav(){
+  const c=issues.reduce((a,i)=>{a[i.severity]=(a[i.severity]||0)+1;a[i.category]=(a[i.category]||0)+1;if(i.fixable&&!i.fixed)a.fixable=(a.fixable||0)+1;if(i.fixed)a.fixed=(a.fixed||0)+1;return a;},{});
+  st("nc-all",issues.length);st("nc-crit",c.critical||0);st("nc-warn",c.warning||0);st("nc-fix",c.fixable||0);
+  ["disk","vm","backup","log","snapshot"].forEach(k=>st("cc-"+k,c[k]||0));
+}
+function visIs(){
+  let l=[...issues];
+  if(activeCat)l=l.filter(i=>i.category===activeCat);
+  if(activeFilt==="critical")l=l.filter(i=>i.severity==="critical");
+  else if(activeFilt==="warning")l=l.filter(i=>i.severity==="warning");
+  else if(activeFilt==="fixable")l=l.filter(i=>i.fixable&&!i.fixed);
+  else if(activeFilt==="fixed")l=l.filter(i=>i.fixed);
+  return l.sort((a,b)=>SEVO[a.severity]-SEVO[b.severity]||a.timestamp.localeCompare(b.timestamp));
+}
+function renderIs(){
+  const s=document.getElementById("iscr"),l=visIs();
+  if(!l.length){const ha=issues.length>0;s.innerHTML=`<div class="state"><div class="si">${ha?"🔍":"✓"}</div><div class="st ${ha?"muted":""}">${ha?"No matches":"All Clear"}</div><div class="ss">${ha?"No issues match the current filter.":"No issues detected. Node looks healthy."}</div></div>`;return;}
+  s.innerHTML=`<div class="ilist">${l.map(iHTML).join("")}</div>`;
+}
+function iHTML(i){
+  const sc=i.severity==="critical"?"crit":i.severity==="warning"?"warn":"info";
+  const ts=new Date(i.timestamp).toLocaleTimeString();
+  const desc=esc(i.description).replace(/\n/g,"<br>");
+  const act=i.fixed?`<div class="ftag">✓ FIXED</div>`
+    :i.fixable?`<button class="fxb" onclick="doFix('${i.id}',this)">⚡ FIX</button><button class="aifxb" onclick="aiFixI('${i.id}')">🧠 AI</button>`
+    :`<button class="aifxb" onclick="aiFixI('${i.id}')">🧠 AI FIX</button><div class="mtag">MANUAL</div>`;
+  return `<div class="issue ${sc}${i.fixed?" fixed":""}" id="issue-${i.id}">
+    <div class="im"><span class="sev ${sc}">${i.severity}</span><span class="cat">${CATI[i.category]||"·"} ${i.category}</span></div>
+    <div><div class="it">${esc(i.title)}</div><div class="id2">${desc}</div>${i.fix_label&&!i.fixed?`<div class="ifh">→ ${esc(i.fix_label)}</div>`:""}${i.fix_output?`<div class="ifr">${esc(i.fix_output)}</div>`:""}<div class="its">${ts}</div></div>
+    <div class="ia">${act}</div></div>`;
+}
+async function triggerScan(){const b=document.getElementById("scanbtn");b.disabled=true;document.getElementById("sw").classList.add("on");toast("info","Scan triggered");try{await req("/api/scan","POST");}catch(e){toast("err","Scan failed");}setTimeout(()=>b.disabled=false,3000);}
+async function doFix(id,b){if(b){b.disabled=true;b.textContent="…";}try{const r=await req(`/api/issues/${id}/fix`,"POST");toast(r.success?"ok":"err",r.message);if(!r.success&&b){b.disabled=false;b.textContent="⚡ FIX";}await pollIs();}catch(e){toast("err","Fix failed");if(b){b.disabled=false;b.textContent="⚡ FIX";}}}
+async function fixAll(){const b=document.getElementById("fixabtn");b.disabled=true;b.textContent="Fixing…";try{const r=await req("/api/fix-all","POST");toast("ok",`Fixed ${r.fixed}/${r.total}`);await pollIs();}catch(e){toast("err","Fix-all failed");}b.disabled=false;b.textContent="⚡ FIX ALL";}
+function setFilt(f){activeFilt=f;activeCat=null;renderIs();st("tbt",TTLS[f]||"Issues");}
+function setCat(c){activeCat=c;activeFilt="all";renderIs();st("tbt",TTLS[c]||c);}
+function setTab(t){activeFilt=t;activeCat=null;document.querySelectorAll(".ftab").forEach(f=>f.classList.remove("active"));const e=document.getElementById("ft-"+t);if(e)e.classList.add("active");renderIs();st("tbt",TTLS[t]||"Issues");}
+
+async function loadAiSt(){try{const s=await req("/api/ai/status");if(s.available){const b=document.getElementById("aiprovbdg");if(b)b.textContent=`${(s.provider||"").toUpperCase()} · ${s.model||""} · ${s.web_search?"🌐 WEB":"LOCAL"}`;}}catch(e){}}
+function aikd(e){if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();sendMsg();}}
+function aiAsk(m){document.getElementById("aiinp").value=m;showP("ai",document.querySelector(".ni.aii"));sendMsg();}
+async function aiFixI(id){showP("ai",null);toast("ai","Generating AI fix…");try{const r=await req("/api/ai/generate-fix","POST",{issue_id:id});addMsg("asst",r.response,r.scripts,r.sources,r.thinking);}catch(e){toast("err","AI fix failed");}}
+async function sendMsg(){
+  const inp=document.getElementById("aiinp"),msg=inp.value.trim();if(!msg)return;inp.value="";
+  addMsg("user",msg);document.getElementById("aityp").classList.add("on");document.getElementById("aisnd").disabled=true;
+  try{const r=await req("/api/ai/chat","POST",{message:msg,use_search:true});document.getElementById("aityp").classList.remove("on");addMsg("asst",r.response,r.scripts,r.sources,r.thinking);}
+  catch(e){document.getElementById("aityp").classList.remove("on");addMsg("asst","⚠ AI request failed: "+e.message);}
+  document.getElementById("aisnd").disabled=false;
+}
+function addMsg(role,text,scripts=[],sources=[],thinking=[]){
+  const ms=document.getElementById("aims"),d=document.createElement("div");d.className=`msg ${role}`;
+  let h=`<div class="mb">`;
+  if(thinking?.length)h+=`<div class="trow">${thinking.map(t=>`<div class="tchip">💭 ${esc(t)}</div>`).join("")}</div>`;
+  h+=esc(text).replace(/\n/g,"<br>");h+=`</div>`;
+  if(sources?.length)h+=`<div class="srcrow">${sources.slice(0,4).map(s=>`<a class="srcc" href="${esc(s.url)}" target="_blank" rel="noopener">🔗 ${esc(s.title||s.url)}</a>`).join("")}</div>`;
+  if(scripts?.length)scripts.forEach((sc,i)=>{h+=`<div class="scblk"><div class="sclbl">📜 Script (${sc.language||"bash"}, ${sc.lines} lines)</div><div class="sccode" id="scc${Date.now()}${i}">${esc(sc.content)}</div><div class="scacts"><button class="btn" onclick="cpyTxt(this.previousElementSibling.textContent)">⧉ COPY</button><button class="btn aib" onclick="runDry(this.previousElementSibling.previousElementSibling.textContent,this)">▶ DRY RUN</button></div></div>`;});
+  h+=`<div class="mmeta">${role==="user"?"You":"FixItBlock AI"} · ${new Date().toLocaleTimeString()}</div>`;
+  d.innerHTML=h;ms.appendChild(d);ms.scrollTop=ms.scrollHeight;
+}
+function cpyTxt(t){navigator.clipboard.writeText(t).then(()=>toast("ok","Copied to clipboard"));}
+async function runDry(code,btn){btn.disabled=true;btn.textContent="Running…";try{const r=await req("/api/scripts/execute","POST",{script:code,dry_run:true});toast(r.dry_run?"info":"ok",r.dry_run?`Dry run OK — ${r.script_lines} lines. Set dry_run=false to execute.`:"Done");if(r.warnings?.length)toast("err","⚠ "+r.warnings[0]);}catch(e){toast("err","Failed");}btn.disabled=false;btn.textContent="▶ DRY RUN";}
+async function clearMem(){await req("/api/ai/clear-memory","POST");document.getElementById("aims").innerHTML="";toast("ai","AI memory cleared");}
+
+function setSF(f,el){sfilt=f;document.querySelectorAll(".sflt").forEach(s=>s.classList.remove("active"));if(el)el.classList.add("active");}
+async function doSearch(){
+  const q=document.getElementById("srchi").value.trim();if(!q)return;
+  const rs=document.getElementById("rscr");rs.innerHTML=`<div class="state"><div class="si">⏳</div><div class="st muted">Searching…</div></div>`;
+  try{
+    if(sfilt==="scripts"){const r=await req("/api/ai/search-scripts","POST",{task:q});renderSrchR(r.sources||[],r.scripts||[],r.response||"");}
+    else{const q2=sfilt==="cve"?`CVE proxmox ${q}`:sfilt==="forum"?`site:forum.proxmox.com ${q}`:sfilt==="docs"?`site:pve.proxmox.com ${q}`:`proxmox ${q}`;const r=await req("/api/ai/search","POST",{query:q2});renderWebR(r.results||[]);}
+  }catch(e){rs.innerHTML=`<div class="state"><div class="si">⚠</div><div class="st err">Search Failed</div><div class="ss">${esc(e.message)}</div></div>`;}
+}
+function renderWebR(items){
+  const el=document.getElementById("rscr");
+  if(!items.length){el.innerHTML=`<div class="state"><div class="si">🔍</div><div class="st muted">No Results</div><div class="ss">Try different keywords or configure a search API key.</div></div>`;return;}
+  el.innerHTML=items.map(r=>`<div class="ritem" onclick="window.open('${esc(r.url)}','_blank')"><div class="rt">🔗 ${esc(r.title||r.url)}</div><div class="ru">${esc(r.url)}</div><div class="rs">${esc(r.snippet||"")}</div><div class="ract"><button class="btn" onclick="event.stopPropagation();window.open('${esc(r.url)}','_blank')">🌐 OPEN</button><button class="btn aib" onclick="event.stopPropagation();aiAsk('Summarize and adapt for my system: ${esc(r.url).replace(/'/g,"")}')">🧠 AI SUMMARIZE</button></div></div>`).join("");
+}
+function renderSrchR(sources,scripts,summary){
+  let h="";
+  if(summary)h+=`<div class="ritem" style="border-left-color:var(--ai)"><div class="rt" style="color:var(--ai)">🧠 AI Analysis</div><div class="rs">${esc(summary).replace(/\n/g,"<br>")}</div></div>`;
+  sources.forEach(r=>{h+=`<div class="ritem scr" onclick="window.open('${esc(r.url)}','_blank')"><div class="rt">📜 ${esc(r.title||r.url)}</div><div class="ru">${esc(r.url)}</div><div class="ract"><button class="btn" onclick="event.stopPropagation();window.open('${esc(r.url)}','_blank')">🌐 OPEN</button><button class="btn aib" onclick="event.stopPropagation();aiAsk('Get and adapt this script for my hardware: ${esc(r.url).replace(/'/g,"")}')">🧠 ADAPT</button></div></div>`;});
+  if(scripts?.length)scripts.forEach(sc=>{h+=`<div class="ritem scr"><div class="rt">⚡ Generated Script (${sc.language}, ${sc.lines} lines)</div><div class="scblk" style="margin-top:6px"><div class="sccode">${esc(sc.content)}</div><div class="scacts"><button class="btn" onclick="cpyTxt(this.parentElement.previousElementSibling.textContent)">⧉ COPY</button></div></div></div>`;});
+  document.getElementById("rscr").innerHTML=h||`<div class="state"><div class="si">🔍</div><div class="st muted">No Results</div></div>`;
+}
+
+async function loadHW(){try{hw=await req("/api/hardware");renderHW();}catch(e){}}
+async function refreshHW(){await req("/api/hardware/refresh","POST");toast("info","Hardware scan started…");setTimeout(loadHW,5000);}
+function renderHW(){
+  const p=hw;if(!p||!p.cpu_model){document.getElementById("hwscr").innerHTML=`<div class="state"><div class="si">⏳</div><div class="st muted">Profiling Hardware…</div></div>`;return;}
+  const card=(t,rows)=>`<div class="hwc"><div class="hwct">${t}</div>${rows.map(([k,v,c])=>`<div class="hwr"><span class="hwk">${k}</span><span class="hwv ${c||""}">${v}</span></div>`).join("")}</div>`;
+  document.getElementById("hwscr").innerHTML=`<div class="hwg">
+    ${card("🖥 CPU",[["Model",p.cpu_model||"—",""],["Cores",`${p.cpu_cores||0}c / ${p.cpu_threads||0}t`,""],["Arch",p.arch||"—",""],["VT-x/AMD-V",p.is_vm_capable?"Yes":"No",p.is_vm_capable?"ok":"err"],["AES-NI",p.has_aes?"Yes":"No",p.has_aes?"ok":""],["AVX2",p.has_avx2?"Yes":"No",p.has_avx2?"ok":""],["NUMA Nodes",p.numa_nodes||0,""],["Sockets",p.cpu_sockets||1,""]])}
+    ${card("💾 Memory",[["Total",p.ram_total_gb?.toFixed(1)+" GB",""],["Free",p.ram_free_gb?.toFixed(1)+" GB",p.ram_free_gb<2?"err":"ok"],["Used",p.ram_used_gb?.toFixed(1)+" GB",""],["Swap",p.swap_total_gb?.toFixed(1)+" GB",""],["HugePages",p.hugepages?"Enabled":"Disabled",""]])}
+    ${card("💿 Storage",[["NVMe",p.nvme_devices?.length||0,p.nvme_devices?.length?"ok":""],["SSD",p.ssd_devices?.length||0,""],["HDD",p.hdd_devices?.length||0,""],["LVM VGs",p.lvm_vgs?.join(", ")||"None",""],["ZFS",p.zfs_available?"Available":"Not used",p.zfs_available?"ok":""],["RAID",p.raid_detected?"Detected":"None",""]])}
+    ${card("🌐 Proxmox",[["Version",p.proxmox_version||"—",""],["Kernel",p.proxmox_kernel||"—",""],["VMs",p.vm_count||0,""],["Containers",p.ct_count||0,""],["HA",p.ha_enabled?"Enabled":"Disabled",p.ha_enabled?"ok":""],["Cluster",p.cluster_name||"Standalone",""],["Subscription",p.pve_subscription||"none",p.pve_subscription==="active"?"ok":"warn"]])}
+    ${p.gpus?.length?card("🎮 GPU",[["Device",p.gpus[0]||"—",""],["Count",p.gpus.length,""],["CUDA",p.cuda_available?"Yes":"No",p.cuda_available?"ok":""],["VRAM",p.gpu_memory_gb?p.gpu_memory_gb.toFixed(1)+" GB":"—",""]]):""}
+    ${card("📊 Performance",[["Load 1m",p.load_avg?.[0]||0,""],["Load 5m",p.load_avg?.[1]||0,""],["IO Wait",p.iowait_pct?p.iowait_pct.toFixed(1)+"%":"—",p.iowait_pct>20?"warn":""],["Uptime",p.uptime_days?p.uptime_days+" days":"—",""],["OS",p.os_name||"—",""]])}
+  </div>`;
+}
+
+function renderSpark(hist){
+  const el=document.getElementById("spark");if(!hist?.length){el.innerHTML="";return;}
+  const mx=Math.max(...hist.map(h=>h.total),1);
+  el.innerHTML=hist.map(h=>{const pct=Math.max(2,Math.round((h.total/mx)*20));const cls=h.counts.critical>0?"has-crit":h.counts.warning>0?"has-warn":h.total===0?"clean":"";return `<div class="spk ${cls}" style="height:${pct}px" title="${new Date(h.timestamp).toLocaleTimeString()} — ${h.total} issues (${h.duration_s}s)"></div>`;}).join("");
+  const l=hist[hist.length-1];st("hstat",`${hist.length} scans · last ${l.duration_s}s`);
+}
+
+function st(id,v){const e=document.getElementById(id);if(e)e.textContent=v;}
+function esc(s){return String(s??"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");}
+function toast(type,msg){const c=document.getElementById("toasts");const e=document.createElement("div");e.className=`toast ${type}`;e.textContent=msg;c.appendChild(e);setTimeout(()=>e.remove(),4500);}
+</script>
+</body>
+</html>
