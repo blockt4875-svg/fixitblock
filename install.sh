@@ -128,7 +128,7 @@ ok "Packages installed"
 
 # Agent files
 info "Deploying agent files..."
-REPO="https://raw.githubusercontent.com/YOUR_USERNAME/fixitblock/main"
+REPO="https://raw.githubusercontent.com/blockt4875-svg/fixitblock/main"
 pct exec ${CT_ID} -- bash -c "mkdir -p /opt/fixitblock/agent/{ai,hardware,security,scripts,static}"
 
 if curl -fsSL --max-time 8 "${REPO}/README.md" &>/dev/null; then
