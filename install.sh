@@ -283,8 +283,9 @@ pct create ${CT_ID} local:vztmpl/${TMPL} \
   --net0     "name=eth0,bridge=${CT_BR},firewall=1,${CT_NET}" \
   --password "${CT_PASS}" --unprivileged 1 \
   --features nesting=1 --onboot 1 --start 1 2>/dev/null
-sleep 6
-CTIP=$(pct exec ${CT_ID} -- hostname -I 2>/dev/null | awk '{print $1}' || echo "pending")
+sleep 10
+CTIP="${CTIP:-pending}"
+for i in {1..15}; do CTIP=$(pct exec ${CT_ID} -- hostname -I 2>/dev/null | awk "{print \$1}"); [[ -n "$CTIP" ]] && break; sleep 2; done
 msg_ok "Container CT${CT_ID} running — IP: ${CTIP}"
 
 msg_info "Setting up SSH keys"
