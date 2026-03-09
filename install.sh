@@ -101,7 +101,8 @@ ask CT_HOST "Hostname" "fixitblock"
 
 echo ""
 echo -e "  ${WH}Available storage pools:${CL}"
-pvesm status --content rootdir 2>/dev/null | awk 'NR>1 && $2=="active" {printf "    %-20s free: %s\n", $1, $5}' || echo "    local-lvm"
+pvesm status 2>/dev/null | awk 'NR>1 && $2=="active" {printf "    %-20s  type: %-12s  free: %s\n", $1, $3, $5}' || echo "    local-lvm"
+echo -e "  ${YW}  (NFS / CIFS / ZFS / Ceph shared storage all supported)${CL}"
 ask CT_STG "Storage pool" "local-lvm"
 
 pick CT_RAM "RAM" \
@@ -261,10 +262,23 @@ if ! ls /var/lib/vz/template/cache/$TMPL &>/dev/null; then
 fi
 msg_ok "Template ready"
 
-msg_info "Creating container CT${CT_ID}"
+# Detect storage type — shared storage (nfs/cifs/zfs/rbd) uses different rootfs format
+STG_TYPE=$(pvesm status 2>/dev/null | awk -v s="$CT_STG" '$1==s{print $3}')
+STG_TYPE="${STG_TYPE:-dir}"
+
+# Shared/network storage: don't append size (Proxmox manages it)
+# Block/local storage: append size in GB
+if [[ "$STG_TYPE" =~ ^(nfs|cifs|glusterfs|cephfs)$ ]]; then
+  ROOTFS_ARG="${CT_STG}:${CT_DISK}"
+  msg_info "Shared storage detected (${STG_TYPE}) — using ${CT_STG}"
+else
+  ROOTFS_ARG="${CT_STG}:${CT_DISK}"
+fi
+
+msg_info "Creating container CT${CT_ID} on ${CT_STG} (type: ${STG_TYPE})"
 pct create ${CT_ID} local:vztmpl/${TMPL} \
   --hostname "${CT_HOST}" --storage "${CT_STG}" \
-  --rootfs   "${CT_STG}:${CT_DISK}" --memory "${CT_RAM}" \
+  --rootfs   "${ROOTFS_ARG}" --memory "${CT_RAM}" \
   --cores    "${CT_CPU}" \
   --net0     "name=eth0,bridge=${CT_BR},firewall=1,${CT_NET}" \
   --password "${CT_PASS}" --unprivileged 1 \
