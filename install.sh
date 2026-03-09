@@ -80,11 +80,14 @@ ask CT_ID   "Container ID"   "$NEXT_ID"
 ask CT_HOST "Hostname"       "fixitblock"
 
 echo ""; echo -e "  ${WH}Available storage pools:${CL}"
-pvesm status 2>/dev/null | awk 'NR>1 && $2=="active" {
-  printf "    %-20s  type: %-10s  free: %s\n", $1, $3, $5
+pvesm status 2>/dev/null | awk 'NR>1 {
+  status=$2; type=$3; free=($2=="active") ? $5 : "n/a"
+  printf "    %-20s  type: %-12s  status: %-8s  free: %s\n", $1, type, status, free
 }' || echo "    local-lvm"
-echo -e "  ${YW}  (NFS / CIFS / ZFS / Ceph all supported)${CL}"
-ask CT_STG "Storage pool" "local-lvm"
+echo ""
+echo -e "  ${YW}  Tip: You can type ANY storage name including shared/NFS/CIFS pools${CL}"
+echo -e "  ${YW}  even if it does not appear in the list above.${CL}"
+ask CT_STG "Storage pool name" "local-lvm"
 
 pick CT_RAM "RAM allocation" \
   "512"  "512 MB — minimum" \
@@ -120,7 +123,11 @@ if [[ "$NET_TYPE" == "static" ]]; then
   CT_NET="ip=${CT_IP},gw=${CT_GW}"; CT_IP_DISPLAY="$CT_IP"
 fi
 
-askpass CT_PASS "Container root password"
+while true; do
+  askpass CT_PASS "Container root password (min 5 chars)"
+  [[ ${#CT_PASS} -ge 5 ]] && break
+  echo -e "  ${RD}Password too short — must be at least 5 characters${CL}"
+done
 
 divider; echo -e "  ${WH}PROXMOX CONNECTION${CL}"; divider
 
