@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # FixItBlock v3 — AI Proxmox Maintenance Agent
 # Whiptail GUI installer — community scripts style
-set -euo pipefail
+
+trap 'echo -e "\n[ERROR] Script failed on line $LINENO" ; exit 1' ERR
 
 # ── Colors ──────────────────────────────────────────────────────
 YW='\033[33m' BL='\033[36m' RD='\033[01;31m' GN='\033[1;92m'
@@ -29,7 +30,7 @@ die() { msg_error "$*"; exit 1; }
 # ── Checks ──────────────────────────────────────────────────────
 [[ $EUID -eq 0 ]] || die "Must run as root on the Proxmox host"
 command -v pveversion &>/dev/null || die "Must run on a Proxmox VE host"
-command -v whiptail   &>/dev/null || apt-get install -y -qq whiptail
+apt-get install -y -qq whiptail &>/dev/null || apt-get install -y -qq whiptail
 
 header_info
 
@@ -47,7 +48,7 @@ get_bridges() {
 }
 
 get_next_ctid() {
-  pvesh get /cluster/nextid 2>/dev/null || echo "200"
+  pvesh get /cluster/nextid 2>/dev/null || echo "200"; true
 }
 
 # ── WELCOME ──────────────────────────────────────────────────────
