@@ -18,6 +18,9 @@ from datetime import datetime, timezone
 from collections import deque
 import requests
 
+# Provider availability cache TTL (seconds)
+_AVAIL_CACHE_TTL = 60
+
 log = logging.getLogger("fixitblock.ai")
 
 # ─── CONFIG ────────────────────────────────────────────────────────────
@@ -88,7 +91,7 @@ class WebSearchEngine:
             r.raise_for_status()
             return [{"title":w.get("title",""),"url":w.get("url",""),"snippet":w.get("description","")}
                     for w in r.json().get("web",{}).get("results",[])]
-        except: return []
+        except Exception: return []
 
     def _serpapi(self, q, n):
         try:
@@ -97,7 +100,7 @@ class WebSearchEngine:
             r.raise_for_status()
             return [{"title":i.get("title",""),"url":i.get("link",""),"snippet":i.get("snippet","")}
                     for i in r.json().get("organic_results",[])]
-        except: return []
+        except Exception: return []
 
     def _ddg(self, q, n):
         try:
@@ -111,7 +114,7 @@ class WebSearchEngine:
                 if isinstance(t,dict) and t.get("Text"):
                     out.append({"title":t.get("Text","")[:70],"url":t.get("FirstURL",""),"snippet":t.get("Text","")})
             return out[:n]
-        except: return []
+        except Exception: return []
 
     def fetch_page(self, url: str, max_chars: int = 4000) -> str:
         try:
@@ -120,7 +123,7 @@ class WebSearchEngine:
             t = re.sub(r"<style[^>]*>.*?</style>","",t,flags=re.DOTALL|re.I)
             t = re.sub(r"<[^>]+>"," ",t)
             return re.sub(r"\s+"," ",t).strip()[:max_chars]
-        except: return ""
+        except Exception: return ""
 
     def search_forum(self, q): return self.search(f"site:forum.proxmox.com {q}", 4)
     def search_github(self, q): return self.search(f"site:github.com proxmox bash {q}", 4)
@@ -150,7 +153,7 @@ class AnthropicProvider:
                 json={"model":self.cfg.anthropic_model,"max_tokens":1,"messages":[{"role":"user","content":"hi"}]},
                 timeout=8)
             return r.status_code in (200,400)
-        except: return False
+        except Exception: return False
 
 class OllamaProvider:
     name = "ollama"
@@ -161,11 +164,10 @@ class OllamaProvider:
         msgs   = [m for m in messages if m["role"] != "system"]
         sysp   = [m["content"] for m in messages if m["role"] == "system"]
         if system: sysp.insert(0, system)
-        r = requests.post(f"{self.cfg.ollama_host}/api/chat",
-            json={"model":self.model,"messages":msgs,"stream":False,
-                  "system":"\n\n".join(sysp) if sysp else "",
-                  "options":{"temperature":self.cfg.temperature,"num_ctx":8192}},
-            timeout=180)
+        payload = {"model":self.model,"messages":msgs,"stream":False,
+                   "options":{"temperature":self.cfg.temperature,"num_ctx":8192}}
+        if sysp: payload["system"] = "\n\n".join(sysp)  # omit if empty — some Ollama builds reject ""
+        r = requests.post(f"{self.cfg.ollama_host}/api/chat", json=payload, timeout=180)
         r.raise_for_status()
         return r.json()["message"]["content"]
     def available(self):
@@ -173,19 +175,21 @@ class OllamaProvider:
             r = requests.get(f"{self.cfg.ollama_host}/api/tags", timeout=5)
             if r.status_code != 200: return False
             models = [m["name"] for m in r.json().get("models",[])]
-            return any(self.model in m for m in models)
-        except: return False
+            # Exact match (e.g. "llama3.2:latest") or base-name match (e.g. "llama3.2" → "llama3.2:latest")
+            # Uses f"{model}:" prefix to avoid "llama3" matching "llama3.2:latest"
+            return any(m == self.model or m == f"{self.model}:latest" or m.startswith(f"{self.model}:") for m in models)
+        except Exception: return False
     def list_models(self):
         try:
             r = requests.get(f"{self.cfg.ollama_host}/api/tags", timeout=5)
             return [m["name"] for m in r.json().get("models",[])]
-        except: return []
+        except Exception: return []
     def pull(self, model=None):
         m = model or self.model
         try:
             r = requests.post(f"{self.cfg.ollama_host}/api/pull",json={"name":m},timeout=600,stream=True)
             return r.status_code == 200
-        except: return False
+        except Exception: return False
 
 class OpenAIProvider:
     name = "openai"
@@ -205,7 +209,7 @@ class OpenAIProvider:
         try:
             r = requests.get("https://api.openai.com/v1/models",headers={"Authorization":f"Bearer {self.cfg.openai_key}"},timeout=5)
             return r.status_code == 200
-        except: return False
+        except Exception: return False
 
 class GroqProvider:
     name = "groq"
@@ -225,7 +229,7 @@ class GroqProvider:
         try:
             r = requests.get("https://api.groq.com/openai/v1/models",headers={"Authorization":f"Bearer {self.cfg.groq_key}"},timeout=5)
             return r.status_code == 200
-        except: return False
+        except Exception: return False
 
 def _make_provider(name: str, cfg: AIConfig):
     return {"anthropic":AnthropicProvider,"ollama":OllamaProvider,
@@ -239,25 +243,46 @@ class CascadeRouter:
         self._provs    = []
         self._active   = None
         self._lock     = threading.Lock()
+        self._avail_cache: dict[str, tuple[bool, float]] = {}
+        self._avail_lock  = threading.Lock()
         self._build_providers()
 
     def _build_providers(self):
         self._provs = []
+        seen_ollama = set()
         for name in self.cfg.cascade:
-            self._provs.append(_make_provider(name, self.cfg))
-        # Always add all Ollama models as fallbacks
-        ollama_base = OllamaProvider(self.cfg)
-        if ollama_base not in self._provs:
-            self._provs.append(ollama_base)
-        for alt_model in [self.cfg.ollama_model2, self.cfg.ollama_model3]:
-            if alt_model:
-                self._provs.append(OllamaProvider(self.cfg, model_override=alt_model))
+            p = _make_provider(name, self.cfg)
+            self._provs.append(p)
+            if isinstance(p, OllamaProvider):
+                seen_ollama.add(p.model)
+        # Add Ollama fallback models not already in cascade
+        for model in [self.cfg.ollama_model, self.cfg.ollama_model2, self.cfg.ollama_model3]:
+            if model and model not in seen_ollama:
+                self._provs.append(OllamaProvider(self.cfg, model_override=model))
+                seen_ollama.add(model)
+
+    def _is_available(self, prov) -> bool:
+        """Check provider availability with a 60-second cache."""
+        key = f"{prov.name}:{getattr(prov, 'model', '')}"
+        with self._avail_lock:
+            cached = self._avail_cache.get(key)
+            if cached and time.time() - cached[1] < _AVAIL_CACHE_TTL:
+                return cached[0]
+        ok = prov.available()
+        with self._avail_lock:
+            self._avail_cache[key] = (ok, time.time())
+        return ok
+
+    def invalidate_cache(self):
+        """Force re-check all providers on next chat."""
+        with self._avail_lock:
+            self._avail_cache.clear()
 
     def chat(self, messages, system="") -> tuple[str, str]:
         errs = []
         for prov in self._provs:
             try:
-                if not prov.available():
+                if not self._is_available(prov):
                     log.debug(f"[cascade] {prov.name} unavailable")
                     continue
                 log.info(f"[cascade] using {prov.name}")
@@ -265,6 +290,10 @@ class CascadeRouter:
                 with self._lock: self._active = prov.name
                 return resp, prov.name
             except Exception as e:
+                # Invalidate cache for this provider on failure
+                key = f"{prov.name}:{getattr(prov, 'model', '')}"
+                with self._avail_lock:
+                    self._avail_cache.pop(key, None)
                 log.warning(f"[cascade] {prov.name} error: {e}")
                 errs.append(f"{prov.name}: {e}")
         raise RuntimeError(f"All providers failed: {'; '.join(errs)}")
@@ -276,10 +305,11 @@ class CascadeRouter:
         seen = set()
         out  = {}
         for p in self._provs:
-            key = getattr(p, "model", p.name)
+            model_name = getattr(p, "model", None) or self.cfg.model_for(p.name)
+            key = f"{p.name}:{model_name}"
             if key in seen: continue
             seen.add(key)
-            out[f"{p.name}:{key}"] = {"available": p.available(), "model": key}
+            out[key] = {"available": self._is_available(p), "model": model_name, "provider": p.name}
         return out
 
 # ─── MEMORY ─────────────────────────────────────────────────────────────
@@ -291,12 +321,16 @@ class ConversationMemory:
         with self._lock: self._msgs.append({"role":role,"content":content})
     def get(self):
         with self._lock: return list(self._msgs)
+    def pop_last(self):
+        """Remove the last message (used for error recovery)."""
+        with self._lock:
+            if self._msgs: self._msgs.pop()
     def clear(self):
         with self._lock: self._msgs.clear()
 
 # ─── RISK ENGINE ─────────────────────────────────────────────────────────
 RISK_MAP = {
-    "critical": [r"rm\s+-rf\s+/(?!\s)",r"mkfs\.",r"dd\s+if=.*of=/dev/[sh]d",r">\s*/dev/sd"],
+    "critical": [r"rm\s+-rf\s+/", r"mkfs\.",r"dd\s+if=.*of=/dev/[sh]d",r">\s*/dev/sd"],
     "high":     [r"pct\s+destroy",r"qm\s+destroy",r"zpool\s+destroy",r"lvremove",r"wipefs"],
     "medium":   [r"systemctl\s+stop\s+pve",r"iptables\s+-F",r"ufw\s+disable",r"pct\s+stop\b",r"qm\s+stop\b"],
     "low":      [r"journalctl\s+--vacuum",r"apt-get\s+autoremove",r"zpool\s+scrub",r"apt-get\s+clean"],
@@ -323,14 +357,21 @@ class ScriptExecutor:
 
     def submit(self, script: str, desc="", source="ai", requester="system") -> dict:
         risk, warnings = assess_risk(script)
-        entry = {"id": hashlib.sha256(script.encode()).hexdigest()[:12],
+        # Include timestamp in ID to prevent collision when same script submitted twice
+        id_seed = f"{script}{time.time_ns()}".encode()
+        entry = {"id": hashlib.sha256(id_seed).hexdigest()[:12],
                  "script": script, "description": desc, "source": source,
                  "requester": requester, "risk": risk, "warnings": warnings,
                  "submitted_at": datetime.now(timezone.utc).isoformat()}
         if risk == "critical":
             entry.update({"status":"blocked","message":"CRITICAL risk — blocked automatically."})
             self._rec(entry); return entry
-        needs_ok = self.cfg.require_approval and RISK_ORDER.index(risk) > RISK_ORDER.index(self.cfg.max_auto_risk)
+        try:
+            current_risk_idx  = RISK_ORDER.index(risk)
+            max_allowed_idx   = RISK_ORDER.index(self.cfg.max_auto_risk)
+        except ValueError:
+            current_risk_idx, max_allowed_idx = 2, 1  # default: treat unknown as medium, allow low
+        needs_ok = self.cfg.require_approval and current_risk_idx > max_allowed_idx
         if needs_ok and not self.cfg.auto_execute:
             entry.update({"status":"pending_approval","message":f"Risk '{risk}' — awaiting approval."})
             with self._lock: self._pend[entry["id"]] = entry
@@ -403,13 +444,29 @@ class SelfHealer:
                     out.append({"check":"dep","msg":f"Could not install {pkg}: {e}","status":"error"})
         return out
 
+    @staticmethod
+    def _detect_init():
+        if os.path.exists("/run/systemd/private") or os.path.exists("/bin/systemctl"):
+            return "systemd"
+        if os.path.exists("/sbin/rc-service") or os.path.exists("/usr/sbin/rc-service"):
+            return "openrc"
+        return "unknown"
+
     def _check_service(self):
+        svc  = "fixitblock"
+        init = self._detect_init()
         try:
-            r = subprocess.run(["systemctl","is-active","fixitblock"],capture_output=True,text=True,timeout=5)
-            if r.stdout.strip() != "active":
-                subprocess.run(["systemctl","restart","fixitblock"],capture_output=True,timeout=15)
-                return [{"check":"service","msg":"Service restarted (was inactive)","status":"fixed"}]
-        except: pass
+            if init == "systemd":
+                r = subprocess.run(["systemctl","is-active",svc],capture_output=True,text=True,timeout=5)
+                if r.stdout.strip() != "active":
+                    subprocess.run(["systemctl","restart",svc],capture_output=True,timeout=15)
+                    return [{"check":"service","msg":"Service restarted (systemd)","status":"fixed"}]
+            elif init == "openrc":
+                r = subprocess.run(["rc-service",svc,"status"],capture_output=True,text=True,timeout=5)
+                if "started" not in r.stdout.lower():
+                    subprocess.run(["rc-service",svc,"restart"],capture_output=True,timeout=15)
+                    return [{"check":"service","msg":"Service restarted (openrc)","status":"fixed"}]
+        except Exception: pass
         return []
 
     def _check_disk(self):
@@ -419,7 +476,7 @@ class SelfHealer:
                 pct = [p for p in line.split() if "%" in p]
                 if pct and int(pct[0].rstrip("%")) > 90:
                     return [{"check":"disk","msg":f"Agent disk at {pct[0]}%","status":"warning"}]
-        except: pass
+        except Exception: pass
         return []
 
     def get_log(self):
@@ -478,7 +535,8 @@ class AIBrain:
         self.healer   = SelfHealer(cfg, self)
         self._hw      = hardware_profile or {}
         self._lock    = threading.Lock()
-        self.memory.add("system", SYSTEM_PROMPT)
+        # NOTE: SYSTEM_PROMPT is passed as `system=` on each router.chat() call.
+        # Do NOT add it to memory — that would cause it to be sent twice.
         if cfg.self_heal:
             threading.Thread(target=self._heal_loop, daemon=True, name="self-healer").start()
 
@@ -488,13 +546,26 @@ class AIBrain:
     def set_ssh(self, ssh):
         self.executor.ssh = ssh
 
-    def _is_online(self):
-        try: requests.get("https://1.1.1.1", timeout=3); return True
-        except: return False
+    _online_cache: tuple = (False, 0.0)
+    _online_lock  = threading.Lock()
+
+    def _is_online(self) -> bool:
+        with self.__class__._online_lock:
+            ok, ts = self.__class__._online_cache
+            if time.time() - ts < 30:
+                return ok
+        try:
+            requests.get("https://1.1.1.1", timeout=3)
+            ok = True
+        except Exception:
+            ok = False
+        with self.__class__._online_lock:
+            self.__class__._online_cache = (ok, time.time())
+        return ok
 
     def _ctx(self, issues=None) -> str:
         h = self._hw; lines = ["=== SYSTEM CONTEXT ==="]
-        if h:
+        if h and h.get("cpu_cores", 0) > 0:
             lines += [
                 f"CPU: {h.get('cpu_model','')} | {h.get('cpu_cores',0)}c/{h.get('cpu_threads',0)}t | AES:{h.get('has_aes',False)} AVX2:{h.get('has_avx2',False)}",
                 f"RAM: {h.get('ram_total_gb',0):.1f}GB total, {h.get('ram_free_gb',0):.1f}GB free",
@@ -504,6 +575,8 @@ class AIBrain:
             if h.get("gpus"):            lines.append(f"GPU: {h['gpus'][0]}")
             if h.get("proxmox_version"): lines.append(f"PVE: {h['proxmox_version']}")
             if h.get("cluster_name"):    lines.append(f"Cluster: {h['cluster_name']}")
+        if not h or h.get("cpu_cores", 0) == 0:
+            lines.append("Hardware: profiling in background...")
         lines.append(f"AI: {self.router.active()} | Online: {self._is_online()} | AutoExec: {self.cfg.auto_execute}")
         if issues:
             lines.append(f"Issues ({len(issues)}):")
@@ -533,23 +606,30 @@ class AIBrain:
                         fetched = self.search.fetch_page(best, 2500)
                         if fetched: search_results[0]["page"] = fetched
 
-        # Build full prompt
-        prompt = self._ctx(issues)
+        # Add user message to memory BEFORE building the enriched prompt
+        # so that context is NOT stored in history (avoids duplication across turns)
+        self.memory.add("user", user_message)
+
+        # Build context-enriched prompt for THIS turn only
+        ctx_prefix = self._ctx(issues)
         if search_results:
-            prompt += "\n=== WEB SEARCH ===\n"
+            ctx_prefix += "\n=== WEB SEARCH ===\n"
             for i, sr in enumerate(search_results[:3], 1):
-                prompt += f"\n[{i}] {sr['title']}\n{sr['url']}\n{sr.get('page', sr.get('snippet',''))[:700]}\n"
-            prompt += "=== END ===\n\n"
+                ctx_prefix += f"\n[{i}] {sr['title']}\n{sr['url']}\n{sr.get('page', sr.get('snippet',''))[:700]}\n"
+            ctx_prefix += "=== END ===\n\n"
         if self.cfg.chain_of_thought:
-            prompt += "Think step by step using <thinking>...</thinking> before answering.\n\n"
+            ctx_prefix += "Think step by step using <thinking>...</thinking> before answering.\n\n"
         if not online:
-            prompt += "[OFFLINE MODE — no internet, using local Ollama AI]\n\n"
-        prompt += user_message
+            ctx_prefix += "[OFFLINE MODE — no internet, using local Ollama AI]\n\n"
+
+        # Inject context into the last (current) user message only — don't persist context in memory
+        messages = list(self.memory.get())
+        if messages and messages[-1]["role"] == "user":
+            messages[-1] = {"role": "user", "content": ctx_prefix + messages[-1]["content"]}
 
         # Inference
-        self.memory.add("user", prompt)
         try:
-            resp, prov = self.router.chat(self.memory.get(), system=SYSTEM_PROMPT)
+            resp, prov = self.router.chat(messages, system=SYSTEM_PROMPT)
             self.memory.add("assistant", resp)
             result["provider"]     = prov
             result["offline_mode"] = (prov == "ollama")
@@ -561,7 +641,10 @@ class AIBrain:
                 resp = re.sub(r"<thinking>.*?</thinking>","",resp,flags=re.DOTALL).strip()
             result["response"] = resp
         except Exception as e:
-            result["response"] = f"⚠ AI error: {e}"; return result
+            # Roll back the user message we added since the call failed
+            self.memory.pop_last()
+            result["response"] = f"⚠ AI error: {e}"
+            return result
 
         # Scripts
         scripts = self._extract_scripts(result["response"])
@@ -584,11 +667,17 @@ class AIBrain:
         return result
 
     def _sq(self, msg: str) -> Optional[str]:
-        triggers = ["fix","error","failed","issue","problem","script","help","disk","memory",
-                    "zfs","network","backup","cve","security","upgrade","performance","crash"]
-        if any(t in msg.lower() for t in triggers):
-            return f"proxmox {' '.join(re.sub(r'[^\w\s]',' ',msg).split()[:7])}"
-        return None
+        """Return a search query only for genuine technical problems."""
+        msg_lower = msg.lower()
+        search_triggers = [
+            "fix","error","failed","failing","broken","crash","kernel","oom",
+            "script","how to","how do","cve","vulnerability","security audit",
+            "zfs","ceph","upgrade pve","performance tuning","disk full","backup failed",
+        ]
+        if not any(t in msg_lower for t in search_triggers):
+            return None
+        clean = re.sub(r"[^\w\s]", " ", msg)
+        return f"proxmox {' '.join(clean.split()[:7])}"
 
     def _extract_scripts(self, text: str) -> list:
         out = []
@@ -649,8 +738,12 @@ Generate an optimized, safe, hardware-adapted bash script. Include source URLs a
         return any(p.available() for p in self.router._provs)
 
     def get_status(self) -> dict:
+        active = self.router.active()
+        # Derive active model name for display
+        active_model = self.cfg.model_for(active) if active != "none" else ""
         return {
-            "active_provider":  self.router.active(),
+            "active_provider":  active,
+            "model":            active_model,
             "providers":        self.router.status(),
             "cascade":          self.cfg.cascade,
             "web_search":       self.cfg.web_search,
@@ -661,4 +754,5 @@ Generate an optimized, safe, hardware-adapted bash script. Include source URLs a
             "pending_scripts":  len(self.executor.pending()),
             "available":        self.is_available(),
             "offline_fallback": OllamaProvider(self.cfg).available(),
+            "init_system":      SelfHealer._detect_init(),
         }

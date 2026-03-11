@@ -164,6 +164,19 @@ main{flex:1;display:flex;flex-direction:column;overflow:hidden}
 .toasts{position:fixed;bottom:13px;right:13px;display:flex;flex-direction:column;gap:4px;z-index:9000}
 .toast{padding:7px 12px;background:var(--bg3);border:1px solid var(--border2);font-size:10px;max-width:270px;animation:fi .2s ease}
 .toast.ok{border-left:3px solid var(--ok);color:var(--ok)}.toast.err{border-left:3px solid var(--crit);color:var(--crit)}.toast.info{border-left:3px solid var(--accent);color:var(--accent)}.toast.ai{border-left:3px solid var(--ai);color:var(--ai)}
+/* Search result link wrapper */
+.rta{display:block;text-decoration:none;color:inherit}
+/* AI error message style */
+.msg.err .mb{background:rgba(255,68,68,.08);border:1px solid rgba(255,68,68,.3);color:var(--crit)}
+/* Password hint */
+.phint{font-size:8px;color:var(--dim);margin-top:4px;line-height:1.6}
+/* Inline code */
+.mb code{background:rgba(0,229,255,.08);border:1px solid rgba(0,229,255,.15);padding:0 3px;color:var(--accent);font-family:var(--mono)}
+/* Bold in AI messages */
+.mb strong{color:#e0eaf0}
+/* AI provider unavailable */
+.aipill.unavail{border-color:var(--crit);background:rgba(255,68,68,.06)}
+.aipill.unavail .aidot{background:var(--crit);animation:none}
 ::-webkit-scrollbar{width:3px;height:3px}::-webkit-scrollbar-track{background:transparent}::-webkit-scrollbar-thumb{background:var(--border2)}
 </style>
 </head>
@@ -174,8 +187,9 @@ main{flex:1;display:flex;flex-direction:column;overflow:hidden}
 <div id="ls">
   <div class="lb" id="lb">
     <div class="ll"><div class="wm"><span class="f">FIX</span><span class="i">IT</span><span class="b">BLOCK</span></div><div class="lsub" id="lsub">AI Maintenance Agent</div></div>
-    <div class="lf"><label>Username</label><input type="text" id="lu" autocomplete="username" placeholder="admin"></div>
+    <div class="lf"><label>Username</label><input type="text" id="lu" autocomplete="username" placeholder="admin" onkeydown="if(event.key==='Enter')document.getElementById('lp').focus()"></div>
     <div class="lf"><label>Password</label><input type="password" id="lp" autocomplete="current-password" placeholder="••••••••••••"></div>
+    <div class="phint" id="preq" style="display:none">Min 12 chars · uppercase · lowercase · number · special char</div>
     <div class="lf" id="lcf" style="display:none"><label>Confirm Password</label><input type="password" id="lpc" placeholder="••••••••••••"></div>
     <button class="lbtn" id="lbtn" onclick="doLogin()">ENTER</button>
     <div class="lerr" id="lerr"></div>
@@ -222,7 +236,7 @@ main{flex:1;display:flex;flex-direction:column;overflow:hidden}
   <div class="ni" onclick="showP('hw',this)"><span class="nic">🔧</span>Hardware</div>
   <div class="nfoot">
     <div class="afrow"><span>Auto-Fix</span><span class="pill off" id="afpill">OFF</span></div>
-    <div class="bfoot"><span style="color:var(--brand)">Fix</span><span style="color:var(--accent)">ItBlock</span> v3 AI</div>
+    <div class="bfoot"><span style="color:var(--brand)">Fix</span><span style="color:var(--accent)">ItBlock</span> v3.2 AI</div>
   </div>
 </nav>
 <main>
@@ -276,7 +290,7 @@ main{flex:1;display:flex;flex-direction:column;overflow:hidden}
     <div class="qb" onclick="aiAsk('How can I improve ZFS performance for my storage setup?')">💾 ZFS Tuning</div>
   </div>
   <div class="aiinr">
-    <textarea class="aiinp" id="aiinp" placeholder="Ask anything about your Proxmox environment…" onkeydown="aikd(event)"></textarea>
+    <textarea class="aiinp" id="aiinp" placeholder="Ask anything about your Proxmox environment… (Enter to send, Shift+Enter for newline)" onkeydown="aikd(event)" oninput="aiInpResize(this)"></textarea>
     <button class="aisnd" id="aisnd" onclick="sendMsg()">SEND</button>
   </div>
 </div>
@@ -317,13 +331,24 @@ main{flex:1;display:flex;flex-direction:column;overflow:hidden}
 "use strict";
 let tok=sessionStorage.getItem("fib_tok")||"";
 let issues=[],hw={},activeFilt="all",activeCat=null,sfilt="all",prevScan=false;
+let _pollIntervals=[];  // track all intervals for cleanup
+let _pollStarted=false; // guard against double-start
 const SEVO={critical:0,warning:1,info:2};
 const CATI={disk:"💾",vm:"🖥",backup:"📦",log:"📋",snapshot:"📸"};
 const TTLS={all:"All Issues",critical:"Critical Issues",warning:"Warnings",fixable:"Fixable Issues",fixed:"Fixed Issues",disk:"Disk & Storage",vm:"VMs & LXC",backup:"Backups",log:"Logs",snapshot:"Snapshots"};
 
 document.addEventListener("DOMContentLoaded",async()=>{
   tick();
-  try{const s=await pub("/api/auth/status");if(!s.initialized){document.getElementById("lcf").style.display="block";document.getElementById("lbtn").textContent="CREATE ACCOUNT";document.getElementById("lsub").textContent="FIRST TIME SETUP";document.getElementById("lnote").textContent="Create your admin account to get started";}}catch(e){}
+  try{
+    const s=await pub("/api/auth/status");
+    if(!s.initialized){
+      document.getElementById("lcf").style.display="block";
+      document.getElementById("preq").style.display="block";
+      document.getElementById("lbtn").textContent="CREATE ACCOUNT";
+      document.getElementById("lsub").textContent="FIRST TIME SETUP";
+      document.getElementById("lnote").textContent="Create your admin account to get started";
+    }
+  }catch(e){}
   if(tok){try{await req("/api/status");showApp();}catch(e){tok="";sessionStorage.removeItem("fib_tok");}}
   document.getElementById("lp").addEventListener("keydown",e=>{if(e.key==="Enter")doLogin();});
 });
@@ -348,9 +373,23 @@ async function doLogin(){
   }catch(e){err.textContent=e.message||"Login failed";btn.disabled=false;}
 }
 function showApp(){document.getElementById("ls").style.display="none";const a=document.getElementById("app");a.style.display="flex";startPoll();loadHW();loadAiSt();pollHist();}
-async function doLogout(){try{await req("/api/auth/logout","POST");}catch(e){}tok="";sessionStorage.removeItem("fib_tok");location.reload();}
+async function doLogout(){
+  try{await req("/api/auth/logout","POST");}catch(e){}
+  tok="";sessionStorage.removeItem("fib_tok");
+  _pollIntervals.forEach(id=>clearInterval(id));
+  _pollIntervals=[];_pollStarted=false;
+  location.reload();
+}
 
-function startPoll(){pollSt();setInterval(pollSt,5000);setInterval(pollIs,9000);setInterval(pollHist,30000);}
+function startPoll(){
+  if(_pollStarted)return;  // guard: never start twice
+  _pollStarted=true;
+  pollSt();
+  _pollIntervals.push(setInterval(pollSt,5000));
+  _pollIntervals.push(setInterval(pollIs,9000));
+  _pollIntervals.push(setInterval(pollHist,30000));
+  _pollIntervals.push(setInterval(loadAiSt,30000));
+}
 async function pollSt(){
   try{
     const d=await req("/api/status");const s=d.summary||{};
@@ -363,7 +402,7 @@ async function pollSt(){
       if(prevScan&&!s.scanning){await pollIs();await pollHist();toast("ok","Scan complete");}
       prevScan=!!s.scanning;
     }else{dot.className="cdot err";lbl.textContent=(d.connect_error||"Disconnected").slice(0,40);}
-    if(d.ai?.available){document.getElementById("aipill").style.display="flex";st("aiplbl",(d.ai.provider||"AI").toUpperCase());}
+    if(d.ai?.available){document.getElementById("aipill").style.display="flex";}
   }catch(e){}
 }
 async function pollIs(){try{issues=await req("/api/issues");updNav();renderIs();}catch(e){}}
@@ -414,32 +453,95 @@ function setFilt(f){activeFilt=f;activeCat=null;renderIs();st("tbt",TTLS[f]||"Is
 function setCat(c){activeCat=c;activeFilt="all";renderIs();st("tbt",TTLS[c]||c);}
 function setTab(t){activeFilt=t;activeCat=null;document.querySelectorAll(".ftab").forEach(f=>f.classList.remove("active"));const e=document.getElementById("ft-"+t);if(e)e.classList.add("active");renderIs();st("tbt",TTLS[t]||"Issues");}
 
-async function loadAiSt(){try{const s=await req("/api/ai/status");if(s.available){const b=document.getElementById("aiprovbdg");if(b)b.textContent=`${(s.provider||"").toUpperCase()} · ${s.model||""} · ${s.web_search?"🌐 WEB":"LOCAL"}`;}}catch(e){}}
+async function loadAiSt(){
+  try{
+    const s=await req("/api/ai/status");
+    const pill=document.getElementById("aipill");
+    const lbl=document.getElementById("aiplbl");
+    if(!pill)return;
+    if(s.available){
+      pill.style.display="flex";
+      pill.classList.remove("unavail");
+      const model=s.model||"";
+      const shortModel=model.includes("/")?model.split("/").pop():model.split("-")[0]||model;
+      lbl.textContent=`${(s.active_provider||s.provider||"AI").toUpperCase()} · ${shortModel} · ${s.web_search?"🌐":"LOCAL"}`;
+      const b=document.getElementById("aiprovbdg");
+      if(b)b.textContent=`${(s.active_provider||s.provider||"?").toUpperCase()} · ${model||"?"} · ${s.web_search?"🌐 WEB":"LOCAL"}`;
+    } else {
+      pill.style.display="flex";
+      pill.classList.add("unavail");
+      lbl.textContent="AI OFFLINE";
+      const b=document.getElementById("aiprovbdg");
+      if(b)b.textContent="NO PROVIDER — Configure API key in .env";
+    }
+  }catch(e){}
+}
 function aikd(e){if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();sendMsg();}}
 function aiAsk(m){document.getElementById("aiinp").value=m;showP("ai",document.querySelector(".ni.aii"));sendMsg();}
 async function aiFixI(id){showP("ai",null);toast("ai","Generating AI fix…");try{const r=await req("/api/ai/generate-fix","POST",{issue_id:id});addMsg("asst",r.response,r.scripts,r.sources,r.thinking);}catch(e){toast("err","AI fix failed");}}
 async function sendMsg(){
-  const inp=document.getElementById("aiinp"),msg=inp.value.trim();if(!msg)return;inp.value="";
+  const inp=document.getElementById("aiinp"),msg=inp.value.trim();if(!msg)return;
+  inp.value="";inp.style.height="38px"; // reset textarea height
+  const ms=document.getElementById("aims");
+  const atBottom=ms.scrollHeight-ms.scrollTop-ms.clientHeight<40;
   addMsg("user",msg);document.getElementById("aityp").classList.add("on");document.getElementById("aisnd").disabled=true;
+  if(atBottom)ms.scrollTop=ms.scrollHeight;
   try{const r=await req("/api/ai/chat","POST",{message:msg,use_search:true});document.getElementById("aityp").classList.remove("on");addMsg("asst",r.response,r.scripts,r.sources,r.thinking);}
   catch(e){document.getElementById("aityp").classList.remove("on");addMsg("asst","⚠ AI request failed: "+e.message);}
   document.getElementById("aisnd").disabled=false;
 }
+// Lightweight markdown renderer for AI responses
+// SECURITY: always HTML-escape FIRST, then apply markdown transforms
+function md(text){
+  let s=esc(String(text??"")); // XSS-safe: escape HTML before any transforms
+  // Inline code — content is already escaped so safe to wrap
+  s=s.replace(/`([^`\n]+)`/g,'<code>$1</code>');
+  // Bold
+  s=s.replace(/\*\*([^*\n]+)\*\*/g,'<strong>$1</strong>');
+  // Headers (##, ###)
+  s=s.replace(/^#{1,3}\s+(.+)$/gm,'<span style="color:#e0eaf0;font-weight:500;letter-spacing:1px;display:block;margin-top:6px">$1</span>');
+  // Bullets
+  s=s.replace(/^[\-\*]\s+(.+)$/gm,'<span style="color:var(--dim)">▸</span> $1');
+  // Numbered lists
+  s=s.replace(/^(\d+)\.\s+(.+)$/gm,'<span style="color:var(--dim)">$1.</span> $2');
+  // Newlines to <br>
+  s=s.replace(/\n/g,"<br>");
+  return s;
+}
+
 function addMsg(role,text,scripts=[],sources=[],thinking=[]){
-  const ms=document.getElementById("aims"),d=document.createElement("div");d.className=`msg ${role}`;
+  const ms=document.getElementById("aims"),d=document.createElement("div");
+  const isErr=role==="asst"&&text&&text.startsWith("⚠ AI error:");
+  const atBottom=ms.scrollHeight-ms.scrollTop-ms.clientHeight<40; // only auto-scroll if near bottom
+  d.className=`msg ${role}${isErr?" err":""}`;
   let h=`<div class="mb">`;
-  if(thinking?.length)h+=`<div class="trow">${thinking.map(t=>`<div class="tchip">💭 ${esc(t)}</div>`).join("")}</div>`;
-  h+=esc(text).replace(/\n/g,"<br>");h+=`</div>`;
-  if(sources?.length)h+=`<div class="srcrow">${sources.slice(0,4).map(s=>`<a class="srcc" href="${esc(s.url)}" target="_blank" rel="noopener">🔗 ${esc(s.title||s.url)}</a>`).join("")}</div>`;
-  if(scripts?.length)scripts.forEach((sc,i)=>{h+=`<div class="scblk"><div class="sclbl">📜 Script (${sc.language||"bash"}, ${sc.lines} lines)</div><div class="sccode" id="scc${Date.now()}${i}">${esc(sc.content)}</div><div class="scacts"><button class="btn" onclick="cpyTxt(this.previousElementSibling.textContent)">⧉ COPY</button><button class="btn aib" onclick="runDry(this.previousElementSibling.previousElementSibling.textContent,this)">▶ DRY RUN</button></div></div>`;});
+  if(thinking?.length)h+=`<div class="trow">${thinking.map(t=>`<div class="tchip">${esc(t)}</div>`).join("")}</div>`;
+  if(isErr){
+    const msg=text.replace("⚠ AI error: All providers failed:","").replace("⚠ AI error:","").trim();
+    h+=`⚠ <strong>AI unavailable</strong><br><br>${esc(msg)||"No AI providers are configured."}<br><br>`;
+    h+=`<span style="color:var(--dim);font-size:10px">To fix: set <code>ANTHROPIC_API_KEY</code> in <code>/opt/fixitblock/.env</code> and restart the service, or switch to <code>AI_PROVIDER=ollama</code> if Ollama has a model downloaded.</span>`;
+  } else {
+    h+=md(text);
+  }
+  h+=`</div>`;
+  if(sources?.length)h+=`<div class="srcrow">${sources.slice(0,4).map(s=>{const u=safeUrl(s.url);return`<a class="srcc"${u?` href="${u}" target="_blank" rel="noopener"`:""}>🔗 ${esc(s.title||s.url)}</a>`;}).join("")}</div>`;
+  if(scripts?.length)scripts.forEach((sc,i)=>{
+    const sid=`scc${Date.now()}${i}`;
+    const risk=sc.risk||"safe";
+    const riskCol=risk==="critical"?"crit":risk==="high"?"warn":risk==="medium"?"info":"ok";
+    h+=`<div class="scblk"><div class="sclbl">📜 Script (${esc(sc.language||"bash")}, ${sc.lines} lines) <span style="color:var(--${riskCol})">RISK:${risk.toUpperCase()}</span></div><div class="sccode" id="${sid}">${esc(sc.content)}</div><div class="scacts"><button class="btn" onclick="cpyById('${sid}')">⧉ COPY</button><button class="btn aib" onclick="runDry(document.getElementById('${sid}').textContent,this)">▶ DRY RUN</button></div></div>`;
+  });
   h+=`<div class="mmeta">${role==="user"?"You":"FixItBlock AI"} · ${new Date().toLocaleTimeString()}</div>`;
-  d.innerHTML=h;ms.appendChild(d);ms.scrollTop=ms.scrollHeight;
+  d.innerHTML=h;ms.appendChild(d);
+  if(atBottom)ms.scrollTop=ms.scrollHeight; // only scroll if already at bottom
 }
 function cpyTxt(t){navigator.clipboard.writeText(t).then(()=>toast("ok","Copied to clipboard"));}
-async function runDry(code,btn){btn.disabled=true;btn.textContent="Running…";try{const r=await req("/api/scripts/execute","POST",{script:code,dry_run:true});toast(r.dry_run?"info":"ok",r.dry_run?`Dry run OK — ${r.script_lines} lines. Set dry_run=false to execute.`:"Done");if(r.warnings?.length)toast("err","⚠ "+r.warnings[0]);}catch(e){toast("err","Failed");}btn.disabled=false;btn.textContent="▶ DRY RUN";}
-async function clearMem(){await req("/api/ai/clear-memory","POST");document.getElementById("aims").innerHTML="";toast("ai","AI memory cleared");}
-
-function setSF(f,el){sfilt=f;document.querySelectorAll(".sflt").forEach(s=>s.classList.remove("active"));if(el)el.classList.add("active");}
+function toast(type,msg){
+  const c=document.getElementById("toasts");const e=document.createElement("div");
+  e.className=`toast ${type}`;e.textContent=msg;c.appendChild(e);
+  const dur=type==="err"?6000:type==="ai"?5000:4000; // errors linger longer
+  setTimeout(()=>{e.style.opacity="0";e.style.transition="opacity .3s";setTimeout(()=>e.remove(),300)},dur);
+}
 async function doSearch(){
   const q=document.getElementById("srchi").value.trim();if(!q)return;
   const rs=document.getElementById("rscr");rs.innerHTML=`<div class="state"><div class="si">⏳</div><div class="st muted">Searching…</div></div>`;
@@ -448,16 +550,20 @@ async function doSearch(){
     else{const q2=sfilt==="cve"?`CVE proxmox ${q}`:sfilt==="forum"?`site:forum.proxmox.com ${q}`:sfilt==="docs"?`site:pve.proxmox.com ${q}`:`proxmox ${q}`;const r=await req("/api/ai/search","POST",{query:q2});renderWebR(r.results||[]);}
   }catch(e){rs.innerHTML=`<div class="state"><div class="si">⚠</div><div class="st err">Search Failed</div><div class="ss">${esc(e.message)}</div></div>`;}
 }
+// Validate URLs to prevent javascript: injection
+function safeUrl(u){try{const p=new URL(String(u||""));return(p.protocol==="https:"||p.protocol==="http:")?p.href:"";}catch{return "";}}
+// Copy by element ID — avoids fragile DOM traversal
+function cpyById(id){const e=document.getElementById(id);if(e)cpyTxt(e.textContent);}
 function renderWebR(items){
   const el=document.getElementById("rscr");
   if(!items.length){el.innerHTML=`<div class="state"><div class="si">🔍</div><div class="st muted">No Results</div><div class="ss">Try different keywords or configure a search API key.</div></div>`;return;}
-  el.innerHTML=items.map(r=>`<div class="ritem" onclick="window.open('${esc(r.url)}','_blank')"><div class="rt">🔗 ${esc(r.title||r.url)}</div><div class="ru">${esc(r.url)}</div><div class="rs">${esc(r.snippet||"")}</div><div class="ract"><button class="btn" onclick="event.stopPropagation();window.open('${esc(r.url)}','_blank')">🌐 OPEN</button><button class="btn aib" onclick="event.stopPropagation();aiAsk('Summarize and adapt for my system: ${esc(r.url).replace(/'/g,"")}')">🧠 AI SUMMARIZE</button></div></div>`).join("");
+  el.innerHTML=items.map(r=>{const u=safeUrl(r.url);const ud=JSON.stringify(u);return`<div class="ritem">${u?`<a class="rta" href="${u}" target="_blank" rel="noopener noreferrer">`:""}<div class="rt">🔗 ${esc(r.title||r.url)}</div><div class="ru">${esc(r.url)}</div><div class="rs">${esc(r.snippet||"")}</div>${u?"</a>":""}<div class="ract">${u?`<button class="btn" onclick="window.open(${ud},'_blank')">🌐 OPEN</button>`:""}<button class="btn aib" onclick="aiAsk('Summarize and adapt for my system: ${esc(r.title||r.url).replace(/'/g,"&#39;")}')">🧠 AI SUMMARIZE</button></div></div>`;}).join("");
 }
 function renderSrchR(sources,scripts,summary){
   let h="";
-  if(summary)h+=`<div class="ritem" style="border-left-color:var(--ai)"><div class="rt" style="color:var(--ai)">🧠 AI Analysis</div><div class="rs">${esc(summary).replace(/\n/g,"<br>")}</div></div>`;
-  sources.forEach(r=>{h+=`<div class="ritem scr" onclick="window.open('${esc(r.url)}','_blank')"><div class="rt">📜 ${esc(r.title||r.url)}</div><div class="ru">${esc(r.url)}</div><div class="ract"><button class="btn" onclick="event.stopPropagation();window.open('${esc(r.url)}','_blank')">🌐 OPEN</button><button class="btn aib" onclick="event.stopPropagation();aiAsk('Get and adapt this script for my hardware: ${esc(r.url).replace(/'/g,"")}')">🧠 ADAPT</button></div></div>`;});
-  if(scripts?.length)scripts.forEach(sc=>{h+=`<div class="ritem scr"><div class="rt">⚡ Generated Script (${sc.language}, ${sc.lines} lines)</div><div class="scblk" style="margin-top:6px"><div class="sccode">${esc(sc.content)}</div><div class="scacts"><button class="btn" onclick="cpyTxt(this.parentElement.previousElementSibling.textContent)">⧉ COPY</button></div></div></div>`;});
+  if(summary)h+=`<div class="ritem" style="border-left-color:var(--ai)"><div class="rt" style="color:var(--ai)">🧠 AI Analysis</div><div class="rs">${md(summary)}</div></div>`;
+  sources.forEach(r=>{const u=safeUrl(r.url);h+=`<div class="ritem scr"><div class="rt">📜 ${esc(r.title||r.url)}</div><div class="ru">${esc(r.url)}</div><div class="ract">${u?`<button class="btn" onclick="window.open(${JSON.stringify(u)},'_blank')">🌐 OPEN</button>`:""}<button class="btn aib" onclick="aiAsk('Get and adapt this script for my hardware: ${esc(r.title||r.url).replace(/'/g,"&#39;")}')">🧠 ADAPT</button></div></div>`;});
+  if(scripts?.length)scripts.forEach((sc,i)=>{const sid=`srsc${Date.now()}${i}`;h+=`<div class="ritem scr"><div class="rt">⚡ Generated Script (${esc(sc.language||"bash")}, ${sc.lines} lines)</div><div class="scblk" style="margin-top:6px"><div class="sccode" id="${sid}">${esc(sc.content)}</div><div class="scacts"><button class="btn" onclick="cpyById('${sid}')">⧉ COPY</button></div></div></div>`;});
   document.getElementById("rscr").innerHTML=h||`<div class="state"><div class="si">🔍</div><div class="st muted">No Results</div></div>`;
 }
 
@@ -485,7 +591,21 @@ function renderSpark(hist){
 
 function st(id,v){const e=document.getElementById(id);if(e)e.textContent=v;}
 function esc(s){return String(s??"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");}
-function toast(type,msg){const c=document.getElementById("toasts");const e=document.createElement("div");e.className=`toast ${type}`;e.textContent=msg;c.appendChild(e);setTimeout(()=>e.remove(),4500);}
+
+async function runDry(code,btn){
+  btn.disabled=true;btn.textContent="Running…";
+  try{const r=await req("/api/scripts/execute","POST",{script:code,dry_run:true});
+    toast(r.dry_run?"info":"ok",r.dry_run?`Dry run OK — ${r.script_lines} lines`:"Done");
+    if(r.warnings?.length)toast("err","⚠ "+r.warnings[0]);
+  }catch(e){toast("err","Dry run failed: "+e.message);}
+  btn.disabled=false;btn.textContent="▶ DRY RUN";
+}
+async function clearMem(){await req("/api/ai/clear-memory","POST");document.getElementById("aims").innerHTML="";toast("ai","AI memory cleared");}
+function setSF(f,el){sfilt=f;document.querySelectorAll(".sflt").forEach(s=>s.classList.remove("active"));if(el)el.classList.add("active");}
+
+// Textarea auto-resize
+function aiInpResize(el){el.style.height="38px";el.style.height=Math.min(el.scrollHeight,120)+"px";}
+
 </script>
 </body>
 </html>

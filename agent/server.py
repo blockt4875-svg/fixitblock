@@ -4,8 +4,10 @@ Fully hardened. Auth-gated. AI-powered. Hardware-aware.
 """
 
 import os
+import re
 import sys
 import json
+import hashlib
 import threading
 import subprocess
 
@@ -42,9 +44,10 @@ app.after_request(apply_security_headers)
 
 _connected       = False
 _connect_error   = None
-_hw_profiler     = HardwareProfiler(ssh_client=None)  # ssh injected after connect
+_hw_profiler     = HardwareProfiler(ssh_client=None)
 _search_engine   = WebSearchEngine(ai_config)
 _ai_brain: AIBrain = None
+_state_lock      = threading.Lock()  # guards writes to _connected, _ai_brain
 
 
 def _startup():
@@ -53,16 +56,18 @@ def _startup():
     # Connect Proxmox agent
     try:
         agent.connect()
-        _connected = True
+        with _state_lock:
+            _connected = True
         log.info("Agent connected")
     except Exception as e:
-        _connect_error = str(e)
+        with _state_lock:
+            _connect_error = str(e)
         log.error(f"Agent connect failed: {e}")
 
     # Inject SSH into hardware profiler
     _hw_profiler = HardwareProfiler(ssh_client=agent.ssh if _connected else None)
 
-    # Profile hardware in background
+    # Profile hardware in background — updates brain when done
     def profile_hw():
         try:
             profile = _hw_profiler.profile()
@@ -74,15 +79,18 @@ def _startup():
 
     threading.Thread(target=profile_hw, daemon=True, name="hw-profiler").start()
 
-    # Initialize AI brain
-    _ai_brain = AIBrain(
+    # Initialize AI brain — assign atomically under lock
+    brain = AIBrain(
         cfg=ai_config,
         search=_search_engine,
-        hardware_profile=_hw_profiler.get()
+        hardware_profile=_hw_profiler.get(),
+        ssh_client=agent.ssh if _connected else None,
     )
+    with _state_lock:
+        _ai_brain = brain
     log.info(f"AI brain initialized: {ai_config.provider}")
 
-    # Initial scan
+    # Initial scan + scheduler
     if _connected:
         threading.Thread(target=agent.scan, daemon=True, name="initial-scan").start()
         agent.start_scheduler()
@@ -96,8 +104,11 @@ threading.Thread(target=_startup, daemon=True, name="startup").start()
 # ─────────────────────────────────────────────
 
 def _require_connected():
-    if not _connected:
-        return jsonify({"error": _connect_error or "Agent not connected"}), 503
+    with _state_lock:
+        connected = _connected
+        err = _connect_error
+    if not connected:
+        return jsonify({"error": err or "Agent not connected"}), 503
     return None
 
 def _ok(data):
@@ -105,6 +116,21 @@ def _ok(data):
 
 def _err(msg, code=400):
     return jsonify({"success": False, "error": msg}), code
+
+def _sanitize_chat(message: str) -> tuple[bool, str]:
+    """
+    Light sanitization for AI chat messages.
+    Only checks length and null bytes — shell patterns are INTENTIONALLY allowed
+    because users legitimately ask the AI about bash syntax, pipes, etc.
+    The LLM's own safety filters and the SYSTEM_PROMPT handle the actual guardrails.
+    """
+    if not isinstance(message, str):
+        return False, ""
+    if len(message) > 4096:
+        return False, "Message too long (max 4096 characters)"
+    if "\x00" in message:
+        return False, "Invalid input"
+    return True, message.strip()
 
 
 # ─────────────────────────────────────────────
@@ -218,7 +244,7 @@ def status():
 def trigger_scan():
     err = _require_connected()
     if err: return err
-    if agent._scanning:
+    if agent.get_summary().get("scanning", False):
         return jsonify({"message": "Scan already in progress"}), 202
     audit("manual_scan", username=g.username)
     threading.Thread(target=agent.scan, daemon=True, name="manual-scan").start()
@@ -303,7 +329,7 @@ def hardware_profile():
 @require_auth
 def hardware_refresh():
     audit("hardware_refresh", username=g.username)
-    threading.Thread(target=_hw_profiler.profile, daemon=True).start()
+    threading.Thread(target=_hw_profiler.profile, daemon=True, name="hw-refresh").start()
     return jsonify({"message": "Hardware profile refresh started"})
 
 
@@ -327,9 +353,9 @@ def ai_chat():
 
     if not message:
         return _err("Message is required")
-    safe, cleaned = sanitize_input(message)
+    safe, cleaned = _sanitize_chat(message)
     if not safe:
-        return _err(f"Unsafe input: {cleaned}")
+        return _err(f"Invalid message: {cleaned}")
 
     audit("ai_chat", username=g.username, message_len=len(message))
 
@@ -368,9 +394,9 @@ def ai_search_scripts():
     task  = str(data.get("task", "")).strip()
     if not task:
         return _err("Task description is required")
-    safe, cleaned = sanitize_input(task)
+    safe, cleaned = _sanitize_chat(task)
     if not safe:
-        return _err(f"Unsafe input: {cleaned}")
+        return _err(f"Invalid task: {cleaned}")
 
     audit("ai_search_scripts", username=g.username, task=task)
     result = _ai_brain.search_scripts_for(cleaned)
@@ -385,7 +411,7 @@ def ai_analyze_logs():
     data        = request.get_json(silent=True) or {}
     log_content = str(data.get("logs", ""))[:5000]
 
-    if not log_content and _connected:
+    if not log_content and _connected and agent.ssh:
         # Fetch live logs from node
         rc, out, _ = agent.ssh.run(
             "journalctl --since '1 hour ago' -p err --no-pager -q 2>/dev/null | tail -100"
@@ -466,7 +492,7 @@ def execute_script():
         })
 
     audit("script_execute", username=g.username,
-          script_hash=__import__("hashlib").sha256(script.encode()).hexdigest()[:16],
+          script_hash=hashlib.sha256(script.encode()).hexdigest()[:16],
           lines=len(script.splitlines()), warnings=warnings)
 
     err = _require_connected()
@@ -598,6 +624,22 @@ def provider_status():
 
 
 # ─────────────────────────────────────────────
+#  HEALTH / LIVENESS
+# ─────────────────────────────────────────────
+
+@app.route("/health")
+def health():
+    """Unauthenticated liveness check for monitoring and load balancers."""
+    ai_ok = _ai_brain is not None and _ai_brain.is_available()
+    return jsonify({
+        "status":    "ok" if _connected else "starting",
+        "connected": _connected,
+        "ai_ready":  ai_ok,
+        "version":   "3.2",
+    }), 200 if _connected else 503
+
+
+# ─────────────────────────────────────────────
 #  STATIC / SPA
 # ─────────────────────────────────────────────
 
@@ -605,9 +647,11 @@ def provider_status():
 @app.route("/<path:path>")
 def serve(path=""):
     static_dir = os.path.join(os.path.dirname(__file__), "static")
-    full_path  = os.path.join(static_dir, path)
-    if path and os.path.exists(full_path):
-        return send_from_directory(static_dir, path)
+    if path:
+        # Guard against path traversal (e.g. ../../etc/passwd)
+        safe = os.path.realpath(os.path.join(static_dir, path))
+        if safe.startswith(os.path.realpath(static_dir) + os.sep) and os.path.isfile(safe):
+            return send_from_directory(static_dir, path)
     return send_from_directory(static_dir, "index.html")
 
 

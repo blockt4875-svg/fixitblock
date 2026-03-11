@@ -168,9 +168,15 @@ class CredentialsStore:
             self._save()
             return True, user.get("role", "admin")
 
+    def _check_password(self, username: str, password: str) -> bool:
+        """Verify password without updating last_login (used internally)."""
+        with self._lock:
+            user = self._data.get("users", {}).get(username)
+            if not user: return False
+            return _verify_password(password, user["password_hash"])
+
     def change_password(self, username: str, old_password: str, new_password: str) -> tuple[bool, str]:
-        ok, _ = self.verify(username, old_password)
-        if not ok:
+        if not self._check_password(username, old_password):
             return False, "Current password is incorrect"
         errors = _validate_password_strength(new_password)
         if errors:
@@ -327,12 +333,26 @@ rate_limiter = RateLimiter()
 
 _audit_lock = threading.Lock()
 
+def _safe_remote_addr() -> str:
+    """Get remote addr safely — works both inside and outside Flask request context."""
+    try:
+        from flask import has_request_context, request as _req
+        if has_request_context():
+            return _req.remote_addr or ""
+    except Exception:
+        pass
+    return ""
+
+
+_audit_dir_ready = False
+
 def audit(event: str, **kwargs):
     """Write a tamper-evident audit log entry."""
+    global _audit_dir_ready
     entry = {
         "ts":    datetime.now(timezone.utc).isoformat(),
         "event": event,
-        "ip":    kwargs.get("ip", request.remote_addr if request else ""),
+        "ip":    kwargs.get("ip", _safe_remote_addr()),
         **{k: v for k, v in kwargs.items() if k != "ip"}
     }
     line = json.dumps(entry)
@@ -342,10 +362,14 @@ def audit(event: str, **kwargs):
 
     with _audit_lock:
         try:
-            os.makedirs(os.path.dirname(AUDIT_LOG_FILE), exist_ok=True)
+            if not _audit_dir_ready:
+                os.makedirs(os.path.dirname(AUDIT_LOG_FILE), exist_ok=True)
+                _audit_dir_ready = True
+            exists = os.path.exists(AUDIT_LOG_FILE)
             with open(AUDIT_LOG_FILE, "a") as f:
                 f.write(full)
-            os.chmod(AUDIT_LOG_FILE, 0o600)
+            if not exists:
+                os.chmod(AUDIT_LOG_FILE, 0o600)  # set perms only on first creation
         except Exception as e:
             log.error(f"Audit log write failed: {e}")
 
@@ -353,20 +377,27 @@ def audit(event: str, **kwargs):
 
 
 def get_audit_log(limit: int = 100) -> list[dict]:
-    """Read recent audit entries."""
+    """Read recent audit entries — reads only the last N lines for memory safety."""
     try:
-        with open(AUDIT_LOG_FILE, "r") as f:
-            lines = f.readlines()
+        # Read last (limit * 2) lines to handle blank lines without loading full file
+        with open(AUDIT_LOG_FILE, "rb") as f:
+            f.seek(0, 2)
+            size = f.tell()
+            chunk = min(size, limit * 300)  # ~300 bytes per line estimate
+            f.seek(max(0, size - chunk))
+            raw = f.read().decode("utf-8", errors="replace")
+        lines = raw.splitlines()
         entries = []
-        for line in reversed(lines[-limit:]):
+        for line in reversed(lines):
             line = line.strip()
             if not line:
                 continue
-            # Strip MAC
             if " [" in line:
                 line = line[:line.rfind(" [")]
             try:
                 entries.append(json.loads(line))
+                if len(entries) >= limit:
+                    break
             except json.JSONDecodeError:
                 pass
         return entries
@@ -382,10 +413,14 @@ def get_audit_log(limit: int = 100) -> list[dict]:
 # ─────────────────────────────────────────────
 
 # Dangerous shell patterns to block in any user-provided input
+# Shell injection patterns — intentionally excludes | (pipe) since
+# AI chat messages legitimately discuss piped commands.
+# This is used for non-script inputs like IDs, usernames, queries.
 _SHELL_DANGEROUS = re.compile(
-    r"(;|\||&&|\$\(|`|>|<|\\x[0-9a-f]{2}|/etc/passwd|/etc/shadow"
-    r"|rm\s+-rf|mkfs|dd\s+if|chmod\s+777|curl.*\|.*bash"
-    r"|wget.*\|.*sh|nc\s+-e|python.*-c|perl.*-e)",
+    r"(;|&&|\$\(|`|\\x[0-9a-f]{2}|/etc/passwd|/etc/shadow"
+    r"|rm\s+-rf\s+/|mkfs\.|dd\s+if=.*of=/dev|chmod\s+777"
+    r"|curl\s.*\|\s*ba?sh|wget\s.*\|\s*sh|nc\s+-e"
+    r"|python3?\s+-c\s|perl\s+-e\s)",
     re.IGNORECASE
 )
 
@@ -501,11 +536,12 @@ def apply_security_headers(response):
     response.headers["Cache-Control"]             = "no-store, no-cache, must-revalidate"
     response.headers["Content-Security-Policy"]   = (
         "default-src 'self'; "
-        "script-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
+        "script-src 'self' 'unsafe-inline'; "  # inline required for SPA
         "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://fonts.gstatic.com; "
-        "font-src 'self' https://fonts.gstatic.com; "
-        "img-src 'self' data:; "
-        "connect-src 'self';"
+        "font-src 'self' data: https://fonts.gstatic.com; "
+        "img-src 'self' data: blob:; "
+        "connect-src 'self'; "
+        "frame-ancestors 'none';"
     )
     # Remove server fingerprint
     response.headers.pop("Server", None)
